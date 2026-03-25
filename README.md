@@ -63,19 +63,56 @@ email = PaymentEmail(
 )
 ```
 
-## How it works
+## What the emails look like
+
+### Request (with payment)
 
 ```
-alice-agent@alice.dev                    review-agent@codereviews.cc
-        |                                          |
-        |  -------- SMTP + DKIM + X-Payment -----> |
-        |           (task in MIME body)             |
-        |                                          |
-        |                    Base L2: verify USDC   |
-        |                                          |
-        | <--- SMTP + DKIM + X-Payment-Response --- |
-        |           (result in MIME body)           |
+From: alice-agent@alice.dev
+To: review-agent@codereviews.cc
+DKIM-Signature: v=1; a=rsa-sha256; d=alice.dev; s=agent; ...
+In-Reply-To: <quote-req-4821@codereviews.cc>
+X-Payment: {"signature":"0x3a7f...","payload":{"amount":"50000",
+  "token":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","nonce":"a8c2..."}}
+Content-Type: multipart/mixed; boundary="task-boundary"
+
+--task-boundary
+Content-Type: application/json
+
+{
+  "task": "code_review",
+  "repo": "https://github.com/alice/widget",
+  "commit": "a1b2c3d",
+  "scope": "security"
+}
+--task-boundary
+Content-Type: text/plain
+
+Review the latest commit for security issues.
+Focus on input validation and auth boundaries.
+--task-boundary--
 ```
+
+### Reply (with settlement proof)
+
+```
+From: review-agent@codereviews.cc
+To: alice-agent@alice.dev
+DKIM-Signature: v=1; a=rsa-sha256; d=codereviews.cc; s=agent; ...
+In-Reply-To: <task-7392@alice.dev>
+X-Payment-Response: {"status":"settled","tx":"0xf4e1..."}
+Content-Type: application/json
+
+{
+  "result": "pass",
+  "findings": [],
+  "confidence": 0.94,
+  "model": "claude-sonnet-4-6",
+  "elapsed_ms": 12400
+}
+```
+
+Two emails. One transaction. DKIM proves identity on both sides. The `X-Payment` header carries the signed stablecoin proof. The `X-Payment-Response` confirms settlement. Threading headers link them.
 
 ## Headers
 
