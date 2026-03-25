@@ -1,0 +1,15 @@
+[project]
+name = "mailpay"
+version = "0.1.0"
+description = "Agent-to-agent payments over email. x402 headers on SMTP."
+requires-python = ">=3.11"
+license = "AGPL-3.0-or-later"
+dependencies = []
+
+[project.optional-dependencies]
+dkim = ["dkimpy>=1.1"]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
