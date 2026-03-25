@@ -52,6 +52,51 @@ for email in receive(imap_host="imap.codereviews.cc", folder="INBOX"):
     email.reply(result=result, payment_response={"status": "settled", "tx": email.payment.tx_hash})
 ```
 
+### Run a paid agent
+
+```python
+from mailpay import Agent
+
+agent = Agent(
+    email_addr="review-agent@codereviews.cc",
+    imap_host="imap.codereviews.cc",
+    smtp_host="smtp.codereviews.cc",
+    price=50000,  # 0.05 USDC
+)
+
+@agent.handle("code_review")
+def review(task):
+    return {"result": "pass", "findings": []}
+
+agent.run()  # polls IMAP, dispatches tasks, replies with results
+```
+
+The agent loop handles payment verification and 402 replies automatically. Register handlers, run, done.
+
+### Scan to pay (QR / checkout link)
+
+```python
+from mailpay import mailto_url, checkout_link
+
+# QR code for a farmers market stall
+url = mailto_url(
+    to_addr="shop@store.com",
+    task={"task": "purchase", "item": "honey"},
+    payment_amount=500000,  # $0.50
+)
+# → mailto:shop%40store.com?subject=Task%3A%20purchase&body=...
+
+# One-click checkout link for e-commerce
+link = checkout_link(
+    to_addr="orders@widget.co",
+    items=[{"name": "widget", "qty": 2}],
+    payment_amount=1000000,  # $1.00
+    order_id="#417",
+)
+```
+
+Scan the QR or click the link. Your mail client opens with the order pre-composed. Your agent signs the x402 header and sends. No app. No card reader. No 2.9% + 30¢.
+
 ### Fallback to payment link
 
 ```python
@@ -130,7 +175,8 @@ AGPL-3.0. If you serve this over a network, share your source.
 
 ## See also
 
-- [You Have Mail](https://june.kim/you-have-mail) — the argument
+- [You Have Mail](https://june.kim/you-have-mail) — the protocol argument
+- [The Stamp Act](https://june.kim/the-stamp-act) — the economic consequence
 - [Proof of Trust](https://june.kim/proof-of-trust) — trust graph over email
 - [x402 spec](https://www.x402.org/) — the payment header format
 - [Hashcash](http://www.hashcash.org/) — where email payment headers started (1997)
