@@ -1,7 +1,10 @@
 """Test agent task dispatch without network."""
 
+from solders.keypair import Keypair
+
 from mailpay.agent import Agent
 from mailpay.models import PaymentEmail, Payment
+from mailpay.payment import sign_payment, USDC_MINT
 
 
 def _make_agent() -> Agent:
@@ -10,8 +13,8 @@ def _make_agent() -> Agent:
         imap_host="localhost",
         smtp_host="localhost",
         price=50000,
-        token="0xUSDC",
-        network="base",
+        token=USDC_MINT,
+        network="solana",
     )
 
     @agent.handle("ping")
@@ -27,19 +30,21 @@ def _make_agent() -> Agent:
 
 def test_process_with_payment():
     agent = _make_agent()
+    kp = Keypair()
+    payment = sign_payment(
+        amount=50000,
+        token=USDC_MINT,
+        network="solana",
+        private_key=str(kp),
+        recipient="bot@test.com",
+    )
     email = PaymentEmail(
         from_addr="alice@alice.dev",
         to_addr="bot@test.com",
         task={"task": "ping"},
         subject="Ping",
         message_id="<123@alice.dev>",
-        payment=Payment(
-            signature="0xabc",
-            amount=50000,
-            token="0xUSDC",
-            network="base",
-            nonce="deadbeef",
-        ),
+        payment=payment,
     )
 
     reply = agent.process(email)

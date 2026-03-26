@@ -30,6 +30,7 @@ def compose(email: PaymentEmail) -> MIMEMultipart:
             token=email.payment_token,
             network=email.payment_network,
             private_key=email.wallet_key,
+            recipient=email.to_addr,
         )
         email.payment = payment
 

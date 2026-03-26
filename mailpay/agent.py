@@ -47,8 +47,8 @@ class Agent:
         smtp_user: str = "",
         smtp_pass: str = "",
         price: int = 0,
-        token: str = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-        network: str = "base",
+        token: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        network: str = "solana",
         poll_interval: int = 10,
     ):
         self.email_addr = email_addr

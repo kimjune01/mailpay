@@ -1,20 +1,24 @@
 """Test compose → parse roundtrip without network."""
 
+from solders.keypair import Keypair
+
 from mailpay.models import PaymentEmail
+from mailpay.payment import USDC_MINT
 from mailpay.send import compose
 from mailpay.receive import parse_email
 
 
 def test_compose_and_parse_with_payment():
+    kp = Keypair()
     email = PaymentEmail(
         from_addr="alice@alice.dev",
         to_addr="bob@bob.cc",
         task={"task": "code_review", "repo": "https://github.com/alice/widget"},
         body_text="Review my code please.",
         payment_amount=50000,
-        payment_token="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-        payment_network="base",
-        wallet_key="0xdeadbeef",
+        payment_token=USDC_MINT,
+        payment_network="solana",
+        wallet_key=str(kp),
     )
 
     msg = compose(email)
@@ -26,8 +30,8 @@ def test_compose_and_parse_with_payment():
     assert parsed.task["task"] == "code_review"
     assert parsed.has_payment
     assert parsed.payment.amount == 50000
-    assert parsed.payment.token == "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-    assert parsed.payment.signature.startswith("0x")
+    assert parsed.payment.token == USDC_MINT
+    assert len(parsed.payment.signature) > 0  # base58 Solana signature
     assert parsed.body_text.strip() == "Review my code please."
 
 

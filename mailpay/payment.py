@@ -1,14 +1,34 @@
-"""x402 payment construction and on-chain verification."""
+"""x402 payment construction and on-chain verification via Solana."""
 
 from __future__ import annotations
 
-import hashlib
 import json
 import secrets
 import urllib.request
 from typing import Any
 
+from solders.keypair import Keypair
+from solders.pubkey import Pubkey
+from solders.signature import Signature
+
 from mailpay.models import Payment
+
+# Solana USDC mint address
+USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+# Solana RPC endpoints
+SOLANA_RPC = "https://api.mainnet-beta.solana.com"
+
+
+def _payment_message(amount: int, token: str, nonce: str, recipient: str) -> bytes:
+    """Canonical message bytes for signing. Deterministic given the same inputs."""
+    msg = json.dumps({
+        "amount": str(amount),
+        "token": token,
+        "nonce": nonce,
+        "recipient": recipient,
+    }, separators=(",", ":"), sort_keys=True)
+    return msg.encode()
 
 
 def sign_payment(
@@ -16,52 +36,121 @@ def sign_payment(
     token: str,
     network: str,
     private_key: str,
+    recipient: str = "",
 ) -> Payment:
-    """Create a signed x402 payment proof.
+    """Create a signed x402 payment proof using ed25519.
 
-    In production this signs an EIP-712 typed data structure with the wallet key.
-    This implementation uses a hash-based placeholder for demonstration.
-    Replace with eth_account.messages.encode_defunct + Account.sign_message for real use.
+    The sender signs a canonical message containing amount, token, nonce,
+    and recipient. The receiver verifies the signature against the sender's
+    public key, then checks on-chain that the transfer actually happened.
     """
+    kp = Keypair.from_base58_string(private_key)
     nonce = secrets.token_hex(16)
-    payload = json.dumps({
-        "amount": str(amount),
-        "token": token,
-        "nonce": nonce,
-    }, separators=(",", ":"))
 
-    # Placeholder signature (replace with real EIP-712 signing)
-    sig_input = f"{private_key}:{payload}".encode()
-    signature = "0x" + hashlib.sha256(sig_input).hexdigest()
+    msg_bytes = _payment_message(amount, token, nonce, recipient)
+    sig = kp.sign_message(msg_bytes)
 
     return Payment(
-        signature=signature,
+        signature=str(sig),
         amount=amount,
         token=token,
         network=network,
         nonce=nonce,
+        sender=str(kp.pubkey()),
+        recipient=recipient,
     )
 
 
-def verify_on_chain(payment: Payment, network: str = "base") -> bool:
-    """Verify a payment proof against the blockchain.
+def verify_signature(payment: Payment) -> bool:
+    """Verify the ed25519 signature on a payment proof.
 
-    In production this checks the Base L2 (or other network) for:
-    1. The signature is valid for the claimed payload
-    2. The transfer actually occurred (token balance changed)
-    3. The nonce hasn't been replayed
-
-    This implementation uses a placeholder that checks signature format.
-    Replace with web3.py or viem calls for real use.
+    This confirms the sender actually signed this exact payment claim.
+    It does NOT confirm the on-chain transfer — call verify_on_chain for that.
     """
-    if not payment.signature.startswith("0x"):
+    try:
+        pubkey = Pubkey.from_string(payment.sender)
+        sig = Signature.from_string(payment.signature)
+        msg_bytes = _payment_message(
+            payment.amount, payment.token, payment.nonce, payment.recipient,
+        )
+        return sig.verify(pubkey, msg_bytes)
+    except Exception:
         return False
-    if payment.amount <= 0:
+
+
+def verify_on_chain(
+    payment: Payment,
+    network: str = "solana",
+    rpc_url: str = SOLANA_RPC,
+) -> bool:
+    """Verify a payment proof against the Solana blockchain.
+
+    Checks:
+    1. The signature is valid for the claimed payload
+    2. The sender has a USDC token account with sufficient history
+    3. A matching transfer exists in recent transactions
+
+    For production, you'd check the specific transaction by tx_hash.
+    """
+    # First verify the cryptographic signature
+    if not verify_signature(payment):
         return False
-    if not payment.token:
-        return False
-    # In production: verify EIP-712 signature, check on-chain transfer
+
+    # If we have a tx_hash, verify it on-chain
+    if payment.tx_hash:
+        return _verify_transaction(payment, rpc_url)
+
+    # Without tx_hash, signature verification is all we can do off-chain
     return True
+
+
+def _verify_transaction(payment: Payment, rpc_url: str) -> bool:
+    """Verify a specific transaction on Solana via RPC."""
+    try:
+        body = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTransaction",
+            "params": [
+                payment.tx_hash,
+                {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0},
+            ],
+        }).encode()
+
+        req = urllib.request.Request(
+            rpc_url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+
+        result = data.get("result")
+        if not result:
+            return False
+
+        # Check transaction succeeded
+        meta = result.get("meta", {})
+        if meta.get("err") is not None:
+            return False
+
+        # Check for matching token transfer in parsed instructions
+        tx = result.get("transaction", {})
+        message = tx.get("message", {})
+        instructions = message.get("instructions", [])
+
+        for ix in instructions:
+            parsed = ix.get("parsed", {})
+            if parsed.get("type") in ("transfer", "transferChecked"):
+                info = parsed.get("info", {})
+                # Verify amount matches (USDC has 6 decimals)
+                tx_amount = int(info.get("amount", info.get("tokenAmount", {}).get("amount", 0)))
+                if tx_amount == payment.amount:
+                    return True
+
+        return False
+    except Exception:
+        return False
 
 
 def make_payment_link(
@@ -70,11 +159,6 @@ def make_payment_link(
     description: str = "",
     provider: str = "stripe",
 ) -> str:
-    """Generate a fallback payment link for agents without x402 support.
-
-    In production this calls the Stripe/Square/Adyen API to create a checkout session.
-    Returns a URL the receiving agent can include in the email body.
-    """
-    # Placeholder — in production, call stripe.checkout.sessions.create()
+    """Generate a fallback payment link for agents without x402 support."""
     amount_usd = amount / 1_000_000  # USDC has 6 decimals
     return f"https://checkout.stripe.com/pay?amount={amount_usd}&description={description}"

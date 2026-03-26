@@ -16,6 +16,8 @@ class Payment:
     network: str
     nonce: str = ""
     tx_hash: str = ""
+    sender: str = ""
+    recipient: str = ""
 
     def to_header(self) -> str:
         payload = {
@@ -24,6 +26,8 @@ class Payment:
                 "amount": str(self.amount),
                 "token": self.token,
                 "nonce": self.nonce,
+                "sender": self.sender,
+                "recipient": self.recipient,
             },
         }
         return json.dumps(payload, separators=(",", ":"))
@@ -36,8 +40,10 @@ class Payment:
             signature=data.get("signature", ""),
             amount=int(payload.get("amount", 0)),
             token=payload.get("token", ""),
-            network="",
+            network=payload.get("network", ""),
             nonce=payload.get("nonce", ""),
+            sender=payload.get("sender", ""),
+            recipient=payload.get("recipient", ""),
         )
 
 
@@ -88,7 +94,7 @@ class PaymentEmail:
     payment: Payment | None = None
     payment_amount: int = 0
     payment_token: str = ""
-    payment_network: str = "base"
+    payment_network: str = "solana"
     wallet_key: str = ""
 
     # Fallback (compatibility path)
