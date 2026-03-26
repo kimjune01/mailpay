@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
 import time
 from typing import Callable
 
@@ -16,6 +18,60 @@ import smtplib
 
 # Type for task handler: takes a task dict, returns a result dict
 TaskHandler = Callable[[dict], dict]
+
+
+class _NonceStore:
+    """Persistent nonce store backed by a JSON file."""
+
+    def __init__(self, path: str):
+        self._path = path
+        self._nonces: set[str] = set()
+        self._load()
+
+    def _load(self) -> None:
+        if os.path.exists(self._path):
+            with open(self._path) as f:
+                self._nonces = set(json.load(f))
+
+    def _save(self) -> None:
+        if not self._path:
+            return
+        os.makedirs(os.path.dirname(self._path) or ".", exist_ok=True)
+        temp = f"{self._path}.tmp"
+        with open(temp, "w") as f:
+            json.dump(sorted(self._nonces), f)
+        os.replace(temp, self._path)
+
+    def seen(self, key: str) -> bool:
+        return key in self._nonces
+
+    def add(self, key: str) -> None:
+        self._nonces.add(key)
+        self._save()
+
+
+class _BudgetTracker:
+    """Track spending per hour. Reject when exceeded."""
+
+    def __init__(self, max_per_hour: int):
+        self.max_per_hour = max_per_hour  # in token units (e.g. USDC micros)
+        self._ledger: list[tuple[float, int]] = []  # (timestamp, amount)
+
+    def _prune(self) -> None:
+        cutoff = time.time() - 3600
+        self._ledger = [(t, a) for t, a in self._ledger if t > cutoff]
+
+    def spent_this_hour(self) -> int:
+        self._prune()
+        return sum(a for _, a in self._ledger)
+
+    def can_spend(self, amount: int) -> bool:
+        if self.max_per_hour <= 0:
+            return True
+        return self.spent_this_hour() + amount <= self.max_per_hour
+
+    def record(self, amount: int) -> None:
+        self._ledger.append((time.time(), amount))
 
 
 class Agent:
@@ -51,6 +107,9 @@ class Agent:
         token: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         network: str = "solana",
         poll_interval: int = 10,
+        nonce_file: str = "",
+        handler_timeout: float = 30.0,
+        max_spend_per_hour: int = 0,
     ):
         self.email_addr = email_addr
         self.imap_host = imap_host
@@ -65,8 +124,17 @@ class Agent:
         self.token = token
         self.network = network
         self.poll_interval = poll_interval
+        self.handler_timeout = handler_timeout
         self._handlers: dict[str, TaskHandler] = {}
-        self._seen_nonces: set[str] = set()
+
+        # Persistent nonce store
+        if nonce_file:
+            self._nonces = _NonceStore(nonce_file)
+        else:
+            self._nonces = _NonceStore("")  # in-memory only (empty path = no persistence)
+
+        # Budget tracking
+        self._budget = _BudgetTracker(max_spend_per_hour)
 
     def handle(self, task_type: str) -> Callable[[TaskHandler], TaskHandler]:
         """Register a handler for a task type.
@@ -97,11 +165,11 @@ class Agent:
         # Check nonce replay
         if email.has_payment and email.payment.nonce:
             nonce_key = f"{email.payment.sender}:{email.payment.nonce}"
-            if nonce_key in self._seen_nonces:
+            if self._nonces.seen(nonce_key):
                 return _error_reply(
                     email, self.email_addr, "nonce already used"
                 )
-            self._seen_nonces.add(nonce_key)
+            self._nonces.add(nonce_key)
 
         # Verify payment signature (cryptographic proof)
         if email.has_payment and not verify_signature(email.payment):
@@ -109,9 +177,25 @@ class Agent:
                 email, self.email_addr, "payment verification failed"
             )
 
-        # Do the work
+        # Check budget
+        if email.has_payment and email.payment:
+            if not self._budget.can_spend(email.payment.amount):
+                return _error_reply(
+                    email, self.email_addr, "budget exceeded"
+                )
+
+        # Do the work (with timeout)
         handler = self._handlers[task_type]
-        result = handler(email.task)
+        result = _run_with_timeout(handler, email.task, self.handler_timeout)
+
+        if result is None:
+            return _error_reply(
+                email, self.email_addr, "handler timeout"
+            )
+
+        # Record spend
+        if email.has_payment and email.payment:
+            self._budget.record(email.payment.amount)
 
         # Build reply
         reply = PaymentEmail(
@@ -162,6 +246,31 @@ class Agent:
             if self.smtp_user:
                 server.login(self.smtp_user, self.smtp_pass)
             server.send_message(msg)
+
+
+def _run_with_timeout(
+    handler: TaskHandler, task: dict, timeout: float,
+) -> dict | None:
+    """Run a handler with a timeout. Returns None on timeout."""
+    result: dict | None = None
+    exception: Exception | None = None
+
+    def target():
+        nonlocal result, exception
+        try:
+            result = handler(task)
+        except Exception as e:
+            exception = e
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    thread.join(timeout)
+
+    if thread.is_alive():
+        return None
+    if exception:
+        raise exception
+    return result
 
 
 def _payment_required_reply(

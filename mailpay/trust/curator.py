@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Callable
 
 from mailpay.trust.exchange import Exchange
@@ -78,6 +79,24 @@ def has_platform_rating(min_rating: float = 4.0) -> Criterion:
                 rating = e.fields.get("rating", 0)
                 if rating >= min_rating:
                     return True
+        return False
+    return check
+
+
+def edges_within_age(max_age_days: int = 365) -> Criterion:
+    """Only count edges newer than max_age_days."""
+    def check(edges: list[Edge]) -> bool:
+        now = datetime.now(timezone.utc)
+        for e in edges:
+            if not e.timestamp:
+                continue
+            try:
+                ts = datetime.fromisoformat(e.timestamp.replace("Z", "+00:00"))
+                age = (now - ts).days
+                if age <= max_age_days:
+                    return True
+            except (ValueError, TypeError):
+                continue
         return False
     return check
 

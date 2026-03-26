@@ -106,3 +106,12 @@ class Exchange:
     @property
     def pending_count(self) -> int:
         return len(self._pending)
+
+    def trust_check(self, sender: str, min_bilateral: int = 1) -> bool:
+        """Check if a sender has enough bilateral edges to be trusted.
+
+        Used by agent/ before accepting paid work from an unknown sender.
+        """
+        edges = self.get_edges(sender)
+        bilateral = [e for e in edges if e.bilateral]
+        return len(bilateral) >= min_bilateral
