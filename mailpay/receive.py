@@ -24,10 +24,17 @@ def parse_email(raw: bytes) -> PaymentEmail:
         in_reply_to=msg.get("In-Reply-To", ""),
     )
 
-    # Parse x402 payment header
-    x_payment = msg.get("X-Payment")
-    if x_payment:
-        pe.payment = Payment.from_header(x_payment)
+    # Extract task from JSON MIME part (may contain embedded payment)
+    pe.task, pe.body_text = _extract_parts(msg)
+
+    # Extract payment: prefer body-embedded, fall back to header
+    if "payment" in pe.task:
+        payment_data = pe.task.pop("payment")
+        pe.payment = Payment.from_header(json.dumps(payment_data))
+    else:
+        x_payment = msg.get("X-Payment")
+        if x_payment:
+            pe.payment = Payment.from_header(x_payment)
 
     # Parse payment-required header (402 equivalent)
     x_required = msg.get("X-Payment-Required")
@@ -43,9 +50,6 @@ def parse_email(raw: bytes) -> PaymentEmail:
     x_link = msg.get("X-Payment-Link")
     if x_link:
         pe.payment_link = x_link
-
-    # Extract task from JSON MIME part
-    pe.task, pe.body_text = _extract_parts(msg)
 
     # DKIM verification (requires dkimpy)
     pe.dkim_verified = _verify_dkim(raw)

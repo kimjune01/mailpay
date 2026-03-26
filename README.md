@@ -176,7 +176,7 @@ AGPL-3.0. If you serve this over a network, share your source.
 ## See also
 
 - [You Have Mail](https://june.kim/you-have-mail) — the protocol argument
-- [The Stamp Act](https://june.kim/the-stamp-act) — the economic consequence
+- [No Postage](https://june.kim/no-postage) — the economic consequence
 - [Proof of Trust](https://june.kim/proof-of-trust) — trust graph over email
 - [x402 spec](https://www.x402.org/) — the payment header format
 - [Hashcash](http://www.hashcash.org/) — where email payment headers started (1997)

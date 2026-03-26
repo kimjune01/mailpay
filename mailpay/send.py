@@ -23,7 +23,7 @@ def compose(email: PaymentEmail) -> MIMEMultipart:
     if email.in_reply_to:
         msg["In-Reply-To"] = email.in_reply_to
 
-    # Sign and attach payment proof
+    # Sign payment proof
     if email.payment_amount > 0 and email.wallet_key:
         payment = sign_payment(
             amount=email.payment_amount,
@@ -31,18 +31,24 @@ def compose(email: PaymentEmail) -> MIMEMultipart:
             network=email.payment_network,
             private_key=email.wallet_key,
         )
-        msg["X-Payment"] = payment.to_header()
         email.payment = payment
+
+    # Task payload as JSON, with payment proof embedded in body
+    if email.task:
+        body = dict(email.task)
+        if email.payment:
+            body["payment"] = json.loads(email.payment.to_header())
+        task_part = MIMEText(json.dumps(body, indent=2), "plain")
+        task_part.replace_header("Content-Type", "application/json")
+        msg.attach(task_part)
+
+    # Also put payment in header for fast parsing (optional, belt-and-suspenders)
+    if email.payment:
+        msg["X-Payment"] = email.payment.to_header()
 
     # Fallback payment link in body
     if email.payment_link:
         msg["X-Payment-Link"] = email.payment_link
-
-    # Task payload as JSON
-    if email.task:
-        task_part = MIMEText(json.dumps(email.task, indent=2), "plain")
-        task_part.replace_header("Content-Type", "application/json")
-        msg.attach(task_part)
 
     # Human-readable description
     if email.body_text:
