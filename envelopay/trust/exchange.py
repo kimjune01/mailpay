@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from envelopay.trust.models import Attestation, Confirmation, Revocation, Edge
+from envelopay.trust.models import Attestation, Confirmation, Revocation, Edge, canonicalize_email
 
 # Unilateral types create edges immediately without subject confirmation
 _UNILATERAL_TYPES = {"platform_rating", "license"}
@@ -25,6 +25,9 @@ class Exchange:
 
     def submit_attestation(self, attestation: Attestation) -> list[Edge]:
         """Submit an attestation. Returns created edges (empty for bilateral pending)."""
+        attestation.attestor = canonicalize_email(attestation.attestor)
+        attestation.subject = canonicalize_email(attestation.subject)
+
         att_id = attestation.attestation_id
         if att_id in self._attestation_ids:
             return []
@@ -40,6 +43,8 @@ class Exchange:
 
     def submit_confirmation(self, confirmation: Confirmation) -> list[Edge]:
         """Submit a bilateral confirmation. Returns two directed edges on success."""
+        confirmation.confirmer = canonicalize_email(confirmation.confirmer)
+
         att_id = confirmation.attestation_id
         if att_id not in self._pending:
             return []
@@ -56,6 +61,8 @@ class Exchange:
 
     def submit_revocation(self, revocation: Revocation) -> bool:
         """Revoke an attestation. Either party can unlink."""
+        revocation.revoker = canonicalize_email(revocation.revoker)
+
         att_id = revocation.attestation_id
 
         if att_id in self._pending:
@@ -103,6 +110,7 @@ class Exchange:
 
     def get_edges(self, addr: str) -> list[Edge]:
         """Get all edges involving an email address."""
+        addr = canonicalize_email(addr)
         return [e for e in self._edges if e.from_addr == addr or e.to_addr == addr]
 
     def get_graph(self) -> list[Edge]:

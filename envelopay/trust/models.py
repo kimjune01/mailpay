@@ -3,8 +3,51 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
+
+# Providers that ignore dots in the local part
+_DOT_INSENSITIVE_DOMAINS = {
+    "gmail.com", "googlemail.com",
+}
+
+
+def canonicalize_email(addr: str) -> str:
+    """Normalize an email address to its canonical form.
+
+    - Lowercase everything
+    - Strip dots from local part for Gmail/Googlemail
+    - Strip +suffix except +agent (the routing address for envelopay)
+
+    Examples:
+        Alice.Smith@Gmail.com → alicesmith@gmail.com
+        alice+promo@gmail.com → alice@gmail.com
+        alice+agent@gmail.com → alice+agent@gmail.com
+        Bob@company.com → bob@company.com
+        bob+agent@company.com → bob+agent@company.com
+    """
+    addr = addr.strip().lower()
+
+    at = addr.rfind("@")
+    if at < 0:
+        return addr
+
+    local = addr[:at]
+    domain = addr[at + 1:]
+
+    # Strip +suffix except +agent
+    plus = local.find("+")
+    if plus >= 0:
+        suffix = local[plus:]
+        if suffix != "+agent":
+            local = local[:plus]
+
+    # Gmail/Googlemail: dots in local part are ignored
+    if domain in _DOT_INSENSITIVE_DOMAINS:
+        local = local.replace(".", "")
+
+    return f"{local}@{domain}"
 
 
 @dataclass

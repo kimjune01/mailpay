@@ -1,11 +1,62 @@
 """Test trust layer: attestations, exchange, curator."""
 
-from envelopay.trust.models import Attestation, Confirmation, Revocation
+from envelopay.trust.models import Attestation, Confirmation, Revocation, canonicalize_email
 from envelopay.trust.exchange import Exchange
 from envelopay.trust.curator import (
     Curator, has_payment_history, has_min_endorsements,
     has_platform_rating, has_bilateral_edges,
 )
+
+
+# --- Canonicalization tests ---
+
+def test_canonicalize_lowercase():
+    assert canonicalize_email("Alice@Gmail.com") == "alice@gmail.com"
+
+def test_canonicalize_gmail_dots():
+    assert canonicalize_email("a.l.i.c.e@gmail.com") == "alice@gmail.com"
+
+def test_canonicalize_gmail_dots_and_case():
+    assert canonicalize_email("A.Li.Ce@GMAIL.COM") == "alice@gmail.com"
+
+def test_canonicalize_strips_plus_suffix():
+    assert canonicalize_email("alice+promo@gmail.com") == "alice@gmail.com"
+
+def test_canonicalize_preserves_plus_agent():
+    assert canonicalize_email("alice+agent@gmail.com") == "alice+agent@gmail.com"
+
+def test_canonicalize_non_gmail_keeps_dots():
+    assert canonicalize_email("first.last@company.com") == "first.last@company.com"
+
+def test_canonicalize_non_gmail_strips_plus():
+    assert canonicalize_email("bob+tag@company.com") == "bob@company.com"
+
+def test_canonicalize_non_gmail_preserves_plus_agent():
+    assert canonicalize_email("bob+agent@company.com") == "bob+agent@company.com"
+
+def test_canonicalize_googlemail():
+    assert canonicalize_email("a.lice+spam@googlemail.com") == "alice@googlemail.com"
+
+
+def test_exchange_canonicalizes_on_ingestion():
+    """Attestation from A.lice@Gmail.com and alice@gmail.com should be the same node."""
+    ex = Exchange()
+    att = Attestation(
+        attestation_id="canon_test_2026",
+        attestation_type="payment_processor",
+        subject="A.Li.Ce@Gmail.com",
+        attestor="attestations@stripe.com",
+        timestamp="2026-03-25",
+        standard_fields={"duration_years": 1},
+    )
+    ex.submit_attestation(att)
+    conf = Confirmation(attestation_id="canon_test_2026", confirmer="alice@gmail.com")
+    edges = ex.submit_confirmation(conf)
+    assert len(edges) == 2
+
+    # Query with any variant should find the edges
+    assert len(ex.get_edges("a.l.i.c.e@gmail.com")) == 2
+    assert len(ex.get_edges("ALICE@GMAIL.COM")) == 2
 
 
 def _stripe_attestation() -> Attestation:

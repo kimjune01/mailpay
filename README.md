@@ -1,173 +1,128 @@
 # envelopay
 
-Agent-to-agent payments over email. x402 headers on SMTP.
+Agent-to-agent payments over email. Two emails, any rail.
 
-**The idea:** email already has identity (DKIM), payloads (MIME), threading (`In-Reply-To`), and federation (SMTP). The only missing dimension is value. [x402](https://www.x402.org/) defined the payment header format for HTTP. This library ports it to email.
-
-## What it does
-
-1. **Send a paid task** — compose an email with an x402 `X-Payment` header and a MIME payload
-2. **Receive and verify** — check DKIM signature, verify on-chain payment, process the task
-3. **Reply with results** — include `X-Payment-Response` with settlement proof
+**The idea:** email already has identity (DKIM), payloads (MIME), threading (`In-Reply-To`), and federation (SMTP). The only missing dimension is value. Envelopay adds a payment proof to the envelope.
 
 ## Quick start
 
+### 1. Get email accounts
+
+Sign up at [AgentMail](https://www.agentmail.to) (free tier: 3 inboxes, 100 emails/day). Create your agent inboxes:
+
 ```bash
-pip install envelopay
+export AGENTMAIL_API_KEY="am_..."
+
+# Create inboxes
+curl -X POST https://api.agentmail.to/v0/inboxes \
+  -H "Authorization: Bearer $AGENTMAIL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "axiomatic"}'
+
+curl -X POST https://api.agentmail.to/v0/inboxes \
+  -H "Authorization: Bearer $AGENTMAIL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "blader"}'
 ```
 
-### Send a paid request
+### 2. Install
 
-```python
-from envelopay import PaymentEmail, send
-
-email = PaymentEmail(
-    from_addr="alice-agent@alice.dev",
-    to_addr="review-agent@codereviews.cc",
-    task={"task": "code_review", "repo": "https://github.com/alice/widget", "commit": "a1b2c3d"},
-    payment_amount=50000,  # 0.05 USDC (6 decimals)
-    payment_token="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",  # USDC on Base
-    payment_network="base",
-    wallet_key="0xYOUR_PRIVATE_KEY",
-)
-send(email, smtp_host="smtp.alice.dev", smtp_port=587)
+```bash
+uv sync
 ```
 
-### Receive and process
+### 3. Run the demo
 
-```python
-from envelopay import receive, verify_payment
-
-for email in receive(imap_host="imap.codereviews.cc", folder="INBOX"):
-    if not email.has_payment:
-        email.reply_payment_required(amount=50000, token=USDC, network="base")
-        continue
-
-    if not verify_payment(email.payment, network="base"):
-        email.reply_error("payment verification failed")
-        continue
-
-    # Do the work
-    result = run_code_review(email.task)
-    email.reply(result=result, payment_response={"status": "settled", "tx": email.payment.tx_hash})
+```bash
+uv run python demo/four_rails.py
 ```
 
-### Run a paid agent
+Shows all four payment paths:
 
-```python
-from envelopay import Agent
+| Path | Payer rail | Receiver rail | Bridge |
+|------|-----------|--------------|--------|
+| Crypto → crypto | On-chain | On-chain | None |
+| Card → crypto | Stripe | On-chain | Bridge.xyz on-ramp |
+| Crypto → card | On-chain | Bank/card | Bridge.xyz off-ramp |
+| Card → card | Stripe | Stripe | None |
 
-agent = Agent(
-    email_addr="review-agent@codereviews.cc",
-    imap_host="imap.codereviews.cc",
-    smtp_host="smtp.codereviews.cc",
-    price=50000,  # 0.05 USDC
-)
+Plus a bounced payment (invalid proof → no DELIVER).
 
-@agent.handle("code_review")
-def review(task):
-    return {"result": "pass", "findings": []}
+## Protocol
 
-agent.run()  # polls IMAP, dispatches tasks, replies with results
-```
+Two states. That's the whole protocol.
 
-The agent loop handles payment verification and 402 replies automatically. Register handlers, run, done.
+| State | Direction | Semantics |
+|-------|-----------|-----------|
+| `REQUEST` | Payer → Worker | Task + payment proof |
+| `DELIVER` | Worker → Payer | Work product + settlement proof |
 
-### Scan to pay (QR / checkout link)
+The `X-Envelopay-State` header carries the state. The JSON MIME part carries the payload. DKIM proves provenance. `In-Reply-To` links the thread. The thread is the transaction log.
 
-```python
-from envelopay import mailto_url, checkout_link
-
-# QR code for a farmers market stall
-url = mailto_url(
-    to_addr="shop@store.com",
-    task={"task": "purchase", "item": "honey"},
-    payment_amount=500000,  # $0.50
-)
-# → mailto:shop%40store.com?subject=Task%3A%20purchase&body=...
-
-# One-click checkout link for e-commerce
-link = checkout_link(
-    to_addr="orders@widget.co",
-    items=[{"name": "widget", "qty": 2}],
-    payment_amount=1000000,  # $1.00
-    order_id="#417",
-)
-```
-
-Scan the QR or click the link. Your mail client opens with the order pre-composed. Your agent signs the x402 header and sends. No app. No card reader. No 2.9% + 30¢.
-
-### Fallback to payment link
-
-```python
-email = PaymentEmail(
-    from_addr="alice-agent@alice.dev",
-    to_addr="old-agent@legacy.com",
-    task={"task": "translate", "text": "Hello world"},
-    payment_link="https://buy.stripe.com/abc123",  # fallback for agents without x402
-)
-```
+See [SPEC.md](SPEC.md) for the full protocol specification.
 
 ## What the emails look like
 
-### Request (with payment)
+### REQUEST
 
 ```
-From: alice-agent@alice.dev
-To: review-agent@codereviews.cc
-DKIM-Signature: v=1; a=rsa-sha256; d=alice.dev; s=agent; ...
-In-Reply-To: <quote-req-4821@codereviews.cc>
-X-Payment: {"signature":"0x3a7f...","payload":{"amount":"50000",
-  "token":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","nonce":"a8c2..."}}
-Content-Type: multipart/mixed; boundary="task-boundary"
+From: axiomatic@agentmail.to
+To: blader@agentmail.to
+Subject: Review PR #417
+Message-ID: <req-8f3a@agentmail.to>
+X-Envelopay-State: REQUEST
+DKIM-Signature: v=1; a=rsa-sha256; d=agentmail.to; ...
+Content-Type: multipart/mixed; boundary="mp"
 
---task-boundary
-Content-Type: application/json
+--mp
+Content-Type: text/plain; charset=utf-8
+
+Review PR #417 in github.com/axiomatic/widget
+
+--mp
+Content-Type: application/json; charset=utf-8
 
 {
-  "task": "code_review",
-  "repo": "https://github.com/alice/widget",
-  "commit": "a1b2c3d",
-  "scope": "security"
+  "task": {"description": "Review PR #417", "repo": "github.com/axiomatic/widget"},
+  "amount": "500000",
+  "token": "USDC",
+  "chain": "solana",
+  "proof": {"tx": "4vJ9..."},
+  "fallback": "https://cash.app/$axiomatic"
 }
---task-boundary
-Content-Type: text/plain
-
-Review the latest commit for security issues.
-Focus on input validation and auth boundaries.
---task-boundary--
+--mp--
 ```
 
-### Reply (with settlement proof)
+### DELIVER
 
 ```
-From: review-agent@codereviews.cc
-To: alice-agent@alice.dev
-DKIM-Signature: v=1; a=rsa-sha256; d=codereviews.cc; s=agent; ...
-In-Reply-To: <task-7392@alice.dev>
-X-Payment-Response: {"status":"settled","tx":"0xf4e1..."}
-Content-Type: application/json
+From: blader@agentmail.to
+To: axiomatic@agentmail.to
+Subject: Re: Review PR #417
+In-Reply-To: <req-8f3a@agentmail.to>
+X-Envelopay-State: DELIVER
+DKIM-Signature: v=1; a=rsa-sha256; d=agentmail.to; ...
 
 {
-  "result": "pass",
-  "findings": [],
-  "confidence": 0.94,
-  "model": "claude-sonnet-4-6",
-  "elapsed_ms": 12400
+  "result": {"summary": "Approved with 2 comments"},
+  "settlement": {"tx": "4vJ9...", "status": "confirmed"}
 }
 ```
 
-Two emails. One transaction. DKIM proves identity on both sides. The `X-Payment` header carries the signed stablecoin proof. The `X-Payment-Response` confirms settlement. Threading headers link them.
+Two emails. Both DKIM-signed. Both parties hold the full record.
 
-## Headers
+## Fallback
 
-Follows the [x402 specification](https://github.com/coinbase/x402/blob/main/specs/x402-specification.md), adapted for SMTP:
+The `fallback` field carries a payment URL for counterparties without a wallet: Stripe checkout, PayPal, Cash App, Venmo — any URL that accepts money. The protocol mandates a proof, not a rail.
 
-| Header | Direction | Purpose |
-|--------|-----------|---------|
-| `X-Payment-Required` | Reply (402 equivalent) | Payment terms: amount, token, network |
-| `X-Payment` | Request | Signed payment proof |
-| `X-Payment-Response` | Reply | Settlement confirmation |
+## Environment variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `AGENTMAIL_API_KEY` | Yes | AgentMail API key for sending/receiving |
+| `SOLANA_PRIVATE_KEY` | For crypto paths | Solana wallet private key (base58) |
+| `BRIDGE_API_KEY` | For cross-rail | Bridge.xyz API key for fiat ↔ crypto |
+| `STRIPE_SECRET_KEY` | For card paths | Stripe API key for card payments |
 
 ## License
 
@@ -175,8 +130,11 @@ AGPL-3.0. If you serve this over a network, share your source.
 
 ## See also
 
+- [Sent](https://june.kim/sent) — the user story
+- [Certified Mail](https://june.kim/certified-mail) — the semantics
 - [You Have Mail](https://june.kim/you-have-mail) — the protocol argument
-- [No Postage](https://june.kim/no-postage) — the economic consequence
-- [Proof of Trust](https://june.kim/proof-of-trust) — trust graph over email
-- [x402 spec](https://www.x402.org/) — the payment header format
-- [Hashcash](http://www.hashcash.org/) — where email payment headers started (1997)
+- [No Postage](https://june.kim/no-postage) — the economics
+- [Illegal Tender](https://june.kim/illegal-tender) — the stack
+- [Proof of Trust](https://june.kim/proof-of-trust) — trust topology
+- [SPEC.md](SPEC.md) — protocol specification
+- [STACK.md](STACK.md) — component map
