@@ -1,6 +1,6 @@
 """Test trust layer: attestations, exchange, curator."""
 
-from mailpay.trust.models import Attestation, Confirmation, Revocation, domain_from_email
+from mailpay.trust.models import Attestation, Confirmation, Revocation
 from mailpay.trust.exchange import Exchange
 from mailpay.trust.curator import (
     Curator, has_payment_history, has_min_endorsements,
@@ -33,11 +33,6 @@ def _google_rating() -> Attestation:
 
 
 # --- Model tests ---
-
-def test_domain_from_email():
-    assert domain_from_email("merchant@example.com") == "example.com"
-    assert domain_from_email("example.com") == "example.com"
-
 
 def test_attestation_serialization():
     att = _stripe_attestation()
@@ -88,8 +83,8 @@ def test_unilateral_creates_edge_immediately():
     edges = ex.submit_attestation(att)
     assert len(edges) == 1
     assert edges[0].kind == "unilateral"
-    assert edges[0].to_domain == "example.com"
-    assert edges[0].from_domain == "google.com"
+    assert edges[0].to_addr == "restaurant@example.com"
+    assert edges[0].from_addr == "attestations@google.com"
     assert ex.edge_count == 1
 
 
@@ -107,9 +102,9 @@ def test_bilateral_requires_confirmation():
     edges = ex.submit_confirmation(conf)
     assert len(edges) == 2  # two directed edges
     assert ex.edge_count == 2
-    domains = {(e.from_domain, e.to_domain) for e in edges}
-    assert ("stripe.com", "example.com") in domains
-    assert ("example.com", "stripe.com") in domains
+    addrs = {(e.from_addr, e.to_addr) for e in edges}
+    assert ("attestations@stripe.com", "merchant@example.com") in addrs
+    assert ("merchant@example.com", "attestations@stripe.com") in addrs
 
 
 def test_self_confirmation_rejected():
@@ -117,10 +112,10 @@ def test_self_confirmation_rejected():
     att = _stripe_attestation()
     ex.submit_attestation(att)
 
-    # Confirmer from same domain as attestor
+    # Attestor confirming themselves
     conf = Confirmation(
         attestation_id="stripe_merchant123_2026",
-        confirmer="other@stripe.com",
+        confirmer="attestations@stripe.com",
     )
     edges = ex.submit_confirmation(conf)
     assert len(edges) == 0
@@ -164,7 +159,7 @@ def test_get_edges_for_domain():
     rating.attestation_id = "google_merchant_2026"
     ex.submit_attestation(rating)
 
-    edges = ex.get_edges("example.com")
+    edges = ex.get_edges("merchant@example.com")
     assert len(edges) == 3  # 2 bilateral + 1 unilateral
 
 
@@ -200,7 +195,7 @@ def test_curator_payment_history():
     curator = Curator(name="commerce-verified")
     curator.require(has_payment_history(min_years=2))
     allowed = curator.evaluate(ex)
-    assert "example.com" in allowed
+    assert "merchant@example.com" in allowed
 
 
 def test_curator_rejects_insufficient_history():
@@ -214,7 +209,7 @@ def test_curator_rejects_insufficient_history():
     curator = Curator(name="strict")
     curator.require(has_payment_history(min_years=2))
     allowed = curator.evaluate(ex)
-    assert "example.com" not in allowed
+    assert "merchant@example.com" not in allowed
 
 
 def test_curator_platform_rating():
@@ -224,7 +219,7 @@ def test_curator_platform_rating():
     curator = Curator(name="quality")
     curator.require(has_platform_rating(min_rating=4.0))
     allowed = curator.evaluate(ex)
-    assert "example.com" in allowed
+    assert "restaurant@example.com" in allowed
 
 
 def test_curator_multiple_criteria():
@@ -238,12 +233,12 @@ def test_curator_multiple_criteria():
     curator.require(has_payment_history(min_years=1))
     curator.require(has_bilateral_edges(min_count=1))
     allowed = curator.evaluate(ex)
-    assert "example.com" in allowed
+    assert "merchant@example.com" in allowed
 
     # Add a criterion that fails
     curator.require(has_min_endorsements(count=5))
     allowed = curator.evaluate(ex)
-    assert "example.com" not in allowed
+    assert "merchant@example.com" not in allowed
 
 
 def test_license_is_unilateral():

@@ -33,8 +33,8 @@ class Curator:
         """Pull the exchange graph and return the set of allowed domains."""
         nodes: set[str] = set()
         for edge in exchange.get_graph():
-            nodes.add(edge.from_domain)
-            nodes.add(edge.to_domain)
+            nodes.add(edge.from_addr)
+            nodes.add(edge.to_addr)
 
         allowed: set[str] = set()
         for node in nodes:

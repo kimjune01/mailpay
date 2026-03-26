@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from mailpay.trust.models import (
-    Attestation, Confirmation, Revocation, Edge, domain_from_email,
-)
+from mailpay.trust.models import Attestation, Confirmation, Revocation, Edge
 
 # Unilateral types create edges immediately without subject confirmation
 _UNILATERAL_TYPES = {"platform_rating", "license"}
@@ -16,13 +14,13 @@ _UNILATERAL_TYPES = {"platform_rating", "license"}
 class Exchange:
     """An append-only attestation ledger.
 
-    Nodes are domains, not email addresses. Bilateral attestations create
+    Nodes are canonical email addresses. Bilateral attestations create
     two directed edges. The exchange does not compute weights or trust
     scores — that's the curator's job.
     """
     _pending: dict[str, Attestation] = field(default_factory=dict)
     _edges: list[Edge] = field(default_factory=list)
-    _attestation_ids: set[str] = field(default_factory=set)  # all seen IDs (PK constraint)
+    _attestation_ids: set[str] = field(default_factory=set)
     _log: list[dict] = field(default_factory=list)
 
     def submit_attestation(self, attestation: Attestation) -> list[Edge]:
@@ -36,8 +34,7 @@ class Exchange:
         self._log.append({"action": "attestation", "id": att_id, "attestor": attestation.attestor})
 
         if attestation.attestation_type in _UNILATERAL_TYPES:
-            edges = self._create_edges(attestation, kind="unilateral")
-            return edges
+            return self._create_edges(attestation, kind="unilateral")
 
         return []
 
@@ -49,10 +46,8 @@ class Exchange:
 
         attestation = self._pending[att_id]
 
-        # Reject self-confirmation: confirmer domain must differ from attestor domain
-        attestor_domain = domain_from_email(attestation.attestor)
-        confirmer_domain = domain_from_email(confirmation.confirmer)
-        if confirmer_domain == attestor_domain:
+        # Confirmer must not be the attestor
+        if confirmation.confirmer == attestation.attestor:
             return []
 
         attestation.confirmed = True
@@ -65,10 +60,7 @@ class Exchange:
 
         if att_id in self._pending:
             att = self._pending[att_id]
-            revoker_domain = domain_from_email(revocation.revoker)
-            attestor_domain = domain_from_email(att.attestor)
-            subject_domain = domain_from_email(att.subject)
-            if revoker_domain not in (attestor_domain, subject_domain):
+            if revocation.revoker not in (att.attestor, att.subject):
                 return False
 
         self._pending.pop(att_id, None)
@@ -83,33 +75,25 @@ class Exchange:
             if key in attestation.optional_fields:
                 fields[key] = attestation.optional_fields[key]
 
-        attestor_domain = domain_from_email(attestation.attestor)
-        subject_domain = domain_from_email(attestation.subject)
-
         edges = []
         if kind == "bilateral":
-            # Two directed edges
-            for from_d, to_d in [(attestor_domain, subject_domain), (subject_domain, attestor_domain)]:
+            for from_a, to_a in [(attestation.attestor, attestation.subject),
+                                  (attestation.subject, attestation.attestor)]:
                 edge = Edge(
-                    from_domain=from_d,
-                    to_domain=to_d,
+                    from_addr=from_a, to_addr=to_a,
                     attestation_id=attestation.attestation_id,
                     attestation_type=attestation.attestation_type,
-                    kind="bilateral",
-                    timestamp=attestation.timestamp,
+                    kind="bilateral", timestamp=attestation.timestamp,
                     fields=fields,
                 )
                 self._edges.append(edge)
                 edges.append(edge)
         else:
-            # One directed edge
             edge = Edge(
-                from_domain=attestor_domain,
-                to_domain=subject_domain,
+                from_addr=attestation.attestor, to_addr=attestation.subject,
                 attestation_id=attestation.attestation_id,
                 attestation_type=attestation.attestation_type,
-                kind="unilateral",
-                timestamp=attestation.timestamp,
+                kind="unilateral", timestamp=attestation.timestamp,
                 fields=fields,
             )
             self._edges.append(edge)
@@ -117,23 +101,18 @@ class Exchange:
 
         return edges
 
-    def get_edges(self, domain: str) -> list[Edge]:
-        """Get all edges involving a domain (as source or target)."""
-        return [
-            e for e in self._edges
-            if e.from_domain == domain or e.to_domain == domain
-        ]
+    def get_edges(self, addr: str) -> list[Edge]:
+        """Get all edges involving an email address."""
+        return [e for e in self._edges if e.from_addr == addr or e.to_addr == addr]
 
     def get_graph(self) -> list[Edge]:
         """Get the full edge set."""
         return list(self._edges)
 
     def get_attestation(self, att_id: str) -> Attestation | None:
-        """Get a single attestation by ID."""
         return self._pending.get(att_id)
 
     def get_log(self, limit: int = 100, since: int = 0) -> list[dict]:
-        """Get append-only log entries for curator sync."""
         return self._log[since:][:limit]
 
     @property
