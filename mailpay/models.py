@@ -25,9 +25,11 @@ class Payment:
             "payload": {
                 "amount": str(self.amount),
                 "token": self.token,
+                "network": self.network,
                 "nonce": self.nonce,
                 "sender": self.sender,
                 "recipient": self.recipient,
+                "tx_hash": self.tx_hash,
             },
         }
         return json.dumps(payload, separators=(",", ":"))
@@ -40,10 +42,11 @@ class Payment:
             signature=data.get("signature", ""),
             amount=int(payload.get("amount", 0)),
             token=payload.get("token", ""),
-            network=payload.get("network", ""),
+            network=payload.get("network", "solana"),
             nonce=payload.get("nonce", ""),
             sender=payload.get("sender", ""),
             recipient=payload.get("recipient", ""),
+            tx_hash=payload.get("tx_hash", ""),
         )
 
 
@@ -51,7 +54,7 @@ class Payment:
 class PaymentRequired:
     """An x402 payment-required response (the 402 equivalent)."""
     scheme: str = "exact"
-    network: str = "base"
+    network: str = "solana"
     max_amount: int = 0
     token: str = ""
     resource: str = ""
@@ -96,6 +99,8 @@ class PaymentEmail:
     payment_token: str = ""
     payment_network: str = "solana"
     wallet_key: str = ""
+    payer_wallet: str = ""
+    payee_wallet: str = ""
 
     # Fallback (compatibility path)
     payment_link: str = ""

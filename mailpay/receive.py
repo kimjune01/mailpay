@@ -95,7 +95,7 @@ def _verify_dkim(raw: bytes) -> bool:
         return False
 
 
-def verify_payment(payment: Payment | None, network: str = "base") -> bool:
+def verify_payment(payment: Payment | None, network: str = "solana") -> bool:
     """Verify an x402 payment proof against the blockchain."""
     if payment is None:
         return False

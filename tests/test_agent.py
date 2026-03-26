@@ -52,7 +52,43 @@ def test_process_with_payment():
     assert reply.task == {"pong": True}
     assert reply.to_addr == "alice@alice.dev"
     assert reply.in_reply_to == "<123@alice.dev>"
-    assert reply.payment_response["status"] == "settled"
+    assert reply.payment_response["status"] == "verified"
+
+
+def test_process_rejects_nonce_replay():
+    agent = _make_agent()
+    kp = Keypair()
+    payment = sign_payment(
+        amount=50000,
+        token=USDC_MINT,
+        network="solana",
+        private_key=str(kp),
+        recipient="bot@test.com",
+    )
+    email1 = PaymentEmail(
+        from_addr="alice@alice.dev",
+        to_addr="bot@test.com",
+        task={"task": "ping"},
+        subject="Ping",
+        message_id="<1@alice.dev>",
+        payment=payment,
+    )
+    email2 = PaymentEmail(
+        from_addr="alice@alice.dev",
+        to_addr="bot@test.com",
+        task={"task": "ping"},
+        subject="Ping",
+        message_id="<2@alice.dev>",
+        payment=payment,  # same payment = same nonce
+    )
+
+    reply1 = agent.process(email1)
+    assert reply1 is not None
+    assert reply1.task == {"pong": True}
+
+    reply2 = agent.process(email2)
+    assert reply2 is not None
+    assert reply2.task == {"error": "nonce already used"}
 
 
 def test_process_without_payment_returns_402():

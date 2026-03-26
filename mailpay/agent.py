@@ -7,7 +7,8 @@ import time
 from typing import Callable
 
 from mailpay.models import PaymentEmail, PaymentRequired
-from mailpay.receive import receive, verify_payment
+from mailpay.payment import verify_signature
+from mailpay.receive import receive
 from mailpay.send import compose
 
 import smtplib
@@ -65,6 +66,7 @@ class Agent:
         self.network = network
         self.poll_interval = poll_interval
         self._handlers: dict[str, TaskHandler] = {}
+        self._seen_nonces: set[str] = set()
 
     def handle(self, task_type: str) -> Callable[[TaskHandler], TaskHandler]:
         """Register a handler for a task type.
@@ -92,8 +94,17 @@ class Agent:
                 email, self.email_addr, self.price, self.token, self.network
             )
 
-        # Verify payment
-        if email.has_payment and not verify_payment(email.payment, self.network):
+        # Check nonce replay
+        if email.has_payment and email.payment.nonce:
+            nonce_key = f"{email.payment.sender}:{email.payment.nonce}"
+            if nonce_key in self._seen_nonces:
+                return _error_reply(
+                    email, self.email_addr, "nonce already used"
+                )
+            self._seen_nonces.add(nonce_key)
+
+        # Verify payment signature (cryptographic proof)
+        if email.has_payment and not verify_signature(email.payment):
             return _error_reply(
                 email, self.email_addr, "payment verification failed"
             )
@@ -110,10 +121,11 @@ class Agent:
             subject=f"Re: {email.subject}",
             in_reply_to=email.message_id,
         )
-        if email.has_payment:
+        if email.has_payment and email.payment:
+            has_tx = bool(email.payment.tx_hash)
             reply.payment_response = {
-                "status": "settled",
-                "tx": email.payment.tx_hash if email.payment else "",
+                "status": "settled" if has_tx else "verified",
+                "tx": email.payment.tx_hash,
             }
         return reply
 

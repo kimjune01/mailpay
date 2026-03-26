@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import smtplib
 import uuid
+from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -23,14 +24,14 @@ def compose(email: PaymentEmail) -> MIMEMultipart:
     if email.in_reply_to:
         msg["In-Reply-To"] = email.in_reply_to
 
-    # Sign payment proof
+    # Sign payment proof (bind to wallet addresses, not email addresses)
     if email.payment_amount > 0 and email.wallet_key:
         payment = sign_payment(
             amount=email.payment_amount,
             token=email.payment_token,
             network=email.payment_network,
             private_key=email.wallet_key,
-            recipient=email.to_addr,
+            recipient=email.payee_wallet,
         )
         email.payment = payment
 
@@ -39,13 +40,17 @@ def compose(email: PaymentEmail) -> MIMEMultipart:
         body = dict(email.task)
         if email.payment:
             body["payment"] = json.loads(email.payment.to_header())
-        task_part = MIMEText(json.dumps(body, indent=2), "plain")
-        task_part.replace_header("Content-Type", "application/json")
+        json_bytes = json.dumps(body, indent=2).encode("utf-8")
+        task_part = MIMEApplication(json_bytes, _subtype="json")
         msg.attach(task_part)
 
-    # Also put payment in header for fast parsing (optional, belt-and-suspenders)
+    # Also put payment in header for fast parsing
     if email.payment:
         msg["X-Payment"] = email.payment.to_header()
+
+    # Emit X-Payment-Required (402 equivalent)
+    if email.payment_required:
+        msg["X-Payment-Required"] = email.payment_required.to_header()
 
     # Fallback payment link in body
     if email.payment_link:

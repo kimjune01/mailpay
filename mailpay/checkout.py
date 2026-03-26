@@ -12,7 +12,7 @@ def mailto_url(
     subject: str = "",
     payment_amount: int = 0,
     payment_token: str = "",
-    payment_network: str = "base",
+    payment_network: str = "solana",
     body_text: str = "",
 ) -> str:
     """Build a mailto: URL that pre-composes a paid email.
@@ -51,8 +51,8 @@ def checkout_link(
     to_addr: str,
     items: list[dict],
     payment_amount: int,
-    payment_token: str = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-    payment_network: str = "base",
+    payment_token: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    payment_network: str = "solana",
     order_id: str = "",
 ) -> str:
     """Generate a one-click checkout mailto: link.
@@ -85,7 +85,7 @@ def qr_data(
     task: dict | None = None,
     payment_amount: int = 0,
     payment_token: str = "",
-    payment_network: str = "base",
+    payment_network: str = "solana",
 ) -> str:
     """Return a string suitable for encoding as a QR code.
 

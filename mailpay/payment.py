@@ -20,7 +20,9 @@ USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 SOLANA_RPC = "https://api.mainnet-beta.solana.com"
 
 
-def _payment_message(amount: int, token: str, nonce: str, recipient: str) -> bytes:
+def _payment_message(
+    amount: int, token: str, nonce: str, recipient: str,
+) -> bytes:
     """Canonical message bytes for signing. Deterministic given the same inputs."""
     msg = json.dumps({
         "amount": str(amount),
@@ -41,8 +43,8 @@ def sign_payment(
     """Create a signed x402 payment proof using ed25519.
 
     The sender signs a canonical message containing amount, token, nonce,
-    and recipient. The receiver verifies the signature against the sender's
-    public key, then checks on-chain that the transfer actually happened.
+    and recipient wallet. The receiver verifies the signature against the
+    sender's public key, then checks on-chain that the transfer happened.
     """
     kp = Keypair.from_base58_string(private_key)
     nonce = secrets.token_hex(16)
@@ -85,27 +87,26 @@ def verify_on_chain(
 ) -> bool:
     """Verify a payment proof against the Solana blockchain.
 
-    Checks:
-    1. The signature is valid for the claimed payload
-    2. The sender has a USDC token account with sufficient history
-    3. A matching transfer exists in recent transactions
-
-    For production, you'd check the specific transaction by tx_hash.
+    Requires both a valid signature AND a tx_hash referencing a real
+    on-chain settlement. Without tx_hash, the proof is a claim, not
+    a settlement — and we reject it.
     """
-    # First verify the cryptographic signature
     if not verify_signature(payment):
         return False
 
-    # If we have a tx_hash, verify it on-chain
-    if payment.tx_hash:
-        return _verify_transaction(payment, rpc_url)
+    if not payment.tx_hash:
+        return False
 
-    # Without tx_hash, signature verification is all we can do off-chain
-    return True
+    return _verify_transaction(payment, rpc_url)
 
 
 def _verify_transaction(payment: Payment, rpc_url: str) -> bool:
-    """Verify a specific transaction on Solana via RPC."""
+    """Verify a specific transaction on Solana via RPC.
+
+    Checks:
+    1. Transaction exists and succeeded
+    2. Contains a token transfer matching amount, mint, sender, and recipient
+    """
     try:
         body = json.dumps({
             "jsonrpc": "2.0",
@@ -129,24 +130,46 @@ def _verify_transaction(payment: Payment, rpc_url: str) -> bool:
         if not result:
             return False
 
-        # Check transaction succeeded
+        # Transaction must have succeeded
         meta = result.get("meta", {})
         if meta.get("err") is not None:
             return False
 
-        # Check for matching token transfer in parsed instructions
+        # Check parsed instructions for matching token transfer
         tx = result.get("transaction", {})
         message = tx.get("message", {})
         instructions = message.get("instructions", [])
 
         for ix in instructions:
             parsed = ix.get("parsed", {})
-            if parsed.get("type") in ("transfer", "transferChecked"):
-                info = parsed.get("info", {})
-                # Verify amount matches (USDC has 6 decimals)
-                tx_amount = int(info.get("amount", info.get("tokenAmount", {}).get("amount", 0)))
-                if tx_amount == payment.amount:
-                    return True
+            if parsed.get("type") not in ("transfer", "transferChecked"):
+                continue
+
+            info = parsed.get("info", {})
+
+            # Verify amount
+            tx_amount = int(
+                info.get("amount",
+                         info.get("tokenAmount", {}).get("amount", 0))
+            )
+            if tx_amount != payment.amount:
+                continue
+
+            # Verify mint (for transferChecked)
+            if "mint" in info and info["mint"] != payment.token:
+                continue
+
+            # Verify sender (authority or source owner)
+            tx_authority = info.get("authority", info.get("source", ""))
+            if payment.sender and tx_authority != payment.sender:
+                continue
+
+            # Verify recipient (destination)
+            tx_destination = info.get("destination", "")
+            if payment.recipient and tx_destination != payment.recipient:
+                continue
+
+            return True
 
         return False
     except Exception:

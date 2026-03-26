@@ -73,20 +73,27 @@ def test_payment_header_roundtrip():
     from mailpay.models import Payment
 
     payment = Payment(
-        signature="0xabc123",
+        signature="abc123sig",
         amount=100000,
-        token="0xUSDC",
-        network="base",
+        token=USDC_MINT,
+        network="solana",
         nonce="deadbeef",
+        tx_hash="5wHGS...",
+        sender="SenderPubkey111",
+        recipient="RecipientPubkey222",
     )
 
     header = payment.to_header()
     parsed = Payment.from_header(header)
 
-    assert parsed.signature == "0xabc123"
+    assert parsed.signature == "abc123sig"
     assert parsed.amount == 100000
-    assert parsed.token == "0xUSDC"
+    assert parsed.token == USDC_MINT
+    assert parsed.network == "solana"
     assert parsed.nonce == "deadbeef"
+    assert parsed.tx_hash == "5wHGS..."
+    assert parsed.sender == "SenderPubkey111"
+    assert parsed.recipient == "RecipientPubkey222"
 
 
 def test_payment_required_roundtrip():
