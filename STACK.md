@@ -9,8 +9,8 @@ License column shows copyleft (GPL/AGPL/EPL), permissive (MIT/Apache), proprieta
 | Component | What it does | License | Link |
 |-----------|-------------|---------|------|
 | Solana SPL Token Program | USDC transfers, $0.0004/tx | Apache 2.0 | [docs](https://spl.solana.com/token) |
-| Sablier | Streaming payments for milestone-based work | BUSL-1.1 | [sablier.com](https://sablier.com) |
 | OpenZeppelin Escrow | Timelocked pull-payment for refunds | MIT | [docs](https://docs.openzeppelin.com/contracts) |
+| Sequential milestone payments | Each milestone is a separate mailpay email — no streaming contract needed | — | [Certified Mail](https://june.kim/certified-mail) |
 
 ## Identity & Trust
 
