@@ -1,6 +1,6 @@
 """Test mailto: URL and checkout link generation."""
 
-from mailpay.checkout import mailto_url, checkout_link, qr_data
+from mailpay import mailto_url, checkout_link, qr_data
 
 
 def test_mailto_basic():

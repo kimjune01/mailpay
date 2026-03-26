@@ -2,10 +2,10 @@
 
 from solders.keypair import Keypair
 
-from mailpay.models import PaymentEmail
-from mailpay.payment import USDC_MINT
-from mailpay.send import compose
-from mailpay.receive import parse_email
+from mailpay import PaymentEmail
+from mailpay import USDC_MINT
+from mailpay import compose
+from mailpay import parse_email
 
 
 def test_compose_and_parse_with_payment():
@@ -70,7 +70,7 @@ def test_compose_without_payment():
 
 
 def test_payment_header_roundtrip():
-    from mailpay.models import Payment
+    from mailpay import Payment
 
     payment = Payment(
         signature="abc123sig",
@@ -97,7 +97,7 @@ def test_payment_header_roundtrip():
 
 
 def test_payment_required_roundtrip():
-    from mailpay.models import PaymentRequired
+    from mailpay import PaymentRequired
 
     req = PaymentRequired(
         scheme="exact",

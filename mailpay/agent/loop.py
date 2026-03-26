@@ -6,10 +6,10 @@ import json
 import time
 from typing import Callable
 
-from mailpay.models import PaymentEmail, PaymentRequired
-from mailpay.payment import verify_signature
-from mailpay.receive import receive
-from mailpay.send import compose
+from mailpay.core.models import PaymentEmail, PaymentRequired
+from mailpay.core.payment import verify_signature
+from mailpay.core.receive import receive
+from mailpay.core.send import compose
 
 import smtplib
 
