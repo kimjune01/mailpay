@@ -1,4 +1,4 @@
-# mailpay
+# envelopay
 
 Agent-to-agent payments over email. x402 headers on SMTP.
 
@@ -13,13 +13,13 @@ Agent-to-agent payments over email. x402 headers on SMTP.
 ## Quick start
 
 ```bash
-pip install mailpay
+pip install envelopay
 ```
 
 ### Send a paid request
 
 ```python
-from mailpay import PaymentEmail, send
+from envelopay import PaymentEmail, send
 
 email = PaymentEmail(
     from_addr="alice-agent@alice.dev",
@@ -36,7 +36,7 @@ send(email, smtp_host="smtp.alice.dev", smtp_port=587)
 ### Receive and process
 
 ```python
-from mailpay import receive, verify_payment
+from envelopay import receive, verify_payment
 
 for email in receive(imap_host="imap.codereviews.cc", folder="INBOX"):
     if not email.has_payment:
@@ -55,7 +55,7 @@ for email in receive(imap_host="imap.codereviews.cc", folder="INBOX"):
 ### Run a paid agent
 
 ```python
-from mailpay import Agent
+from envelopay import Agent
 
 agent = Agent(
     email_addr="review-agent@codereviews.cc",
@@ -76,7 +76,7 @@ The agent loop handles payment verification and 402 replies automatically. Regis
 ### Scan to pay (QR / checkout link)
 
 ```python
-from mailpay import mailto_url, checkout_link
+from envelopay import mailto_url, checkout_link
 
 # QR code for a farmers market stall
 url = mailto_url(

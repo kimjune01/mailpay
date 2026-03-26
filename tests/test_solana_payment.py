@@ -2,8 +2,8 @@
 
 from solders.keypair import Keypair
 
-from mailpay import sign_payment, verify_signature, verify_on_chain
-from mailpay import Payment
+from envelopay import sign_payment, verify_signature, verify_on_chain
+from envelopay import Payment
 
 
 def test_sign_payment_returns_valid_payment():

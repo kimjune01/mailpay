@@ -8,10 +8,10 @@ import threading
 import time
 from typing import Callable
 
-from mailpay.core.models import PaymentEmail, PaymentRequired
-from mailpay.core.payment import verify_signature
-from mailpay.core.receive import receive
-from mailpay.core.send import compose
+from envelopay.core.models import PaymentEmail, PaymentRequired
+from envelopay.core.payment import verify_signature
+from envelopay.core.receive import receive
+from envelopay.core.send import compose
 
 import smtplib
 

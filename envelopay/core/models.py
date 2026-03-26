@@ -1,4 +1,4 @@
-"""Data models for mailpay."""
+"""Data models for envelopay."""
 
 from __future__ import annotations
 

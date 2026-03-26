@@ -11,7 +11,7 @@ from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 from solders.signature import Signature
 
-from mailpay.core.models import Payment
+from envelopay.core.models import Payment
 
 # Solana USDC mint address
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"

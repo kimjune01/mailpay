@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from mailpay.trust.models import Attestation, Confirmation, Revocation, Edge
+from envelopay.trust.models import Attestation, Confirmation, Revocation, Edge
 
 
 class TrustExchange(ABC):

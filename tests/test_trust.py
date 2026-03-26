@@ -1,8 +1,8 @@
 """Test trust layer: attestations, exchange, curator."""
 
-from mailpay.trust.models import Attestation, Confirmation, Revocation
-from mailpay.trust.exchange import Exchange
-from mailpay.trust.curator import (
+from envelopay.trust.models import Attestation, Confirmation, Revocation
+from envelopay.trust.exchange import Exchange
+from envelopay.trust.curator import (
     Curator, has_payment_history, has_min_endorsements,
     has_platform_rating, has_bilateral_edges,
 )

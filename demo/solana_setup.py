@@ -75,7 +75,7 @@ def wait_for_confirmation(signature: str, max_wait: int = 30) -> bool:
 
 def main():
     """Full devnet setup: create two wallets, fund them, check balances."""
-    print("=== Mailpay Solana Devnet Setup ===\n")
+    print("=== Envelopay Solana Devnet Setup ===\n")
 
     # Create two agent wallets
     alice = create_wallet()
@@ -101,8 +101,8 @@ def main():
     check_balance(bob.pubkey())
     print()
 
-    # Print keys for use in mailpay
-    print("=== Use these in mailpay ===")
+    # Print keys for use in envelopay
+    print("=== Use these in envelopay ===")
     print(f"Alice private key: {alice}")
     print(f"Alice public key:  {alice.pubkey()}")
     print(f"Bob private key:   {bob}")

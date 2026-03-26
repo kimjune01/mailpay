@@ -9,8 +9,8 @@ from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from mailpay.core.models import PaymentEmail
-from mailpay.core.payment import sign_payment
+from envelopay.core.models import PaymentEmail
+from envelopay.core.payment import sign_payment
 
 
 def compose(email: PaymentEmail) -> MIMEMultipart:

@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable
 
-from mailpay.trust.exchange import Exchange
-from mailpay.trust.models import Edge
+from envelopay.trust.exchange import Exchange
+from envelopay.trust.models import Edge
 
 
 # A criterion is a function that takes a list of edges for a node and returns True/False

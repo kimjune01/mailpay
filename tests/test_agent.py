@@ -2,9 +2,9 @@
 
 from solders.keypair import Keypair
 
-from mailpay import Agent
-from mailpay import PaymentEmail, Payment
-from mailpay import sign_payment, USDC_MINT
+from envelopay import Agent
+from envelopay import PaymentEmail, Payment
+from envelopay import sign_payment, USDC_MINT
 
 
 def _make_agent() -> Agent:

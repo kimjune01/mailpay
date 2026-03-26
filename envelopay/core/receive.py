@@ -8,8 +8,8 @@ import json
 from email.message import Message
 from typing import Iterator
 
-from mailpay.core.models import Payment, PaymentEmail, PaymentRequired
-from mailpay.core.payment import verify_on_chain
+from envelopay.core.models import Payment, PaymentEmail, PaymentRequired
+from envelopay.core.payment import verify_on_chain
 
 
 def parse_email(raw: bytes) -> PaymentEmail:

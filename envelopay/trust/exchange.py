@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from mailpay.trust.models import Attestation, Confirmation, Revocation, Edge
+from envelopay.trust.models import Attestation, Confirmation, Revocation, Edge
 
 # Unilateral types create edges immediately without subject confirmation
 _UNILATERAL_TYPES = {"platform_rating", "license"}

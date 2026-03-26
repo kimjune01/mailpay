@@ -1,22 +1,21 @@
-# Mailpay Protocol Specification
+# Envelopay Protocol Specification
 
 Version: 0.1.0-draft
 
 ## 1. Scope
 
-Mailpay is an SMTP-native protocol for agent-to-agent paid requests over email.
+Envelopay is an SMTP-native protocol for agent-to-agent paid requests over email.
 
 This specification defines:
 
-- A message state machine carried in email headers
+- Two protocol states: REQUEST and DELIVER
 - A payment-proof JSON MIME part
 - A settlement-proof JSON MIME part
 - DKIM-based provenance requirements
 - Threading requirements using `Message-ID`, `In-Reply-To`, and `References`
-- Optional extension states for low-trust interactions
 - A rail-agnostic proof model with fallback payment links
 
-Mailpay does not define a specific blockchain, payment rail, wallet system, escrow contract, or proof format. It defines how proofs are transported and linked in an email transaction log.
+Envelopay does not define a specific blockchain, payment rail, wallet system, escrow contract, or proof format. It defines how proofs are transported and linked in an email transaction log.
 
 ## 2. Terminology
 
@@ -24,7 +23,7 @@ The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are interpreted as des
 
 - **Proof**: machine-verifiable evidence that value has been authorized, reserved, or transferred
 - **Settlement proof**: machine-verifiable evidence that the transaction was settled or finalized
-- **Transaction thread**: the ordered email conversation representing one mailpay transaction
+- **Transaction thread**: the ordered email conversation representing one envelopay transaction
 - **Fallback**: a payment URL for counterparties without wallet infrastructure
 
 ## 3. Design Principles
@@ -32,70 +31,46 @@ The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are interpreted as des
 - SMTP-native. MIME-native. DKIM-anchored.
 - The email thread is the transaction log.
 - The protocol mandates a proof, not a rail.
-- Two core states. Everything else is optional.
+- Two states: REQUEST and DELIVER. That's it.
+- Trust is a discovery filter, not a protocol layer. You decide who to email before you send. The protocol is the same regardless of trust level.
 
 ## 4. Message Model
 
-Each mailpay message:
+Each envelopay message:
 
 - MUST be a valid RFC 5322 email
 - MUST include `Message-ID`
-- MUST include `X-Mailpay-State`
-- MUST carry the mailpay payload as a `Content-Type: application/json` MIME part
+- MUST include `X-Envelopay-State`
+- MUST carry the envelopay payload as a `Content-Type: application/json` MIME part
 - SHOULD be DKIM-signed by the sender domain
 - MUST use `In-Reply-To` and `References` for all messages after the first
 
 ## 5. States
 
-### 5.1 Core States
-
-Conforming implementations MUST support:
+Conforming implementations MUST support exactly two states:
 
 | State | Direction | Semantics |
 |-------|-----------|-----------|
 | `REQUEST` | Payer → Worker | Initiates a paid task with payment proof |
 | `DELIVER` | Worker → Payer | Completes the task with settlement proof |
 
-These two states are sufficient for the base protocol.
+Two emails. One transaction. The protocol does not define additional states.
 
-### 5.2 Extension States
+Trust decisions happen before the protocol starts. The payer chooses who to email based on reputation, attestation history, prior transactions, or any other signal. Once you decide to send, the protocol is always the same: REQUEST, DELIVER. You don't add escrow to a CashApp payment. You just don't pay people you don't trust.
 
-Implementations MAY support these for low-trust or high-value transactions:
-
-| State | Direction | Semantics |
-|-------|-----------|-----------|
-| `ACCEPT` | Worker → Payer | Confirms commitment before starting work |
-| `CONFIRM` | Payer → Worker | Confirms receipt and releases escrow |
-| `DISPUTE` | Payer → Worker | Contests delivery within a dispute window |
-| `RESOLVE` | Arbitrator → Both | Issues a ruling with settlement instruction |
-
-Implementations that do not support extension states MUST still interoperate on `REQUEST` and `DELIVER`.
-
-### 5.3 Trust Compression
-
-Agents SHOULD select the minimum states needed:
-
-| Trust level | States | Example |
-|------------|--------|---------|
-| High | REQUEST → DELIVER | Repeat counterparty, small task |
-| Medium | REQUEST → ACCEPT → DELIVER → CONFIRM | First interaction, moderate value |
-| Low | Full lifecycle + DISPUTE → RESOLVE | Unknown agent, high-value task |
-
-Trust assessment is an application concern, not a protocol concern.
-
-### 5.4 Header
+### 5.1 Header
 
 ```
-X-Mailpay-State: REQUEST
+X-Envelopay-State: REQUEST
 ```
 
-Values MUST be one of: `REQUEST`, `DELIVER`, `ACCEPT`, `CONFIRM`, `DISPUTE`, `RESOLVE`. Values SHOULD be uppercase on send, MUST be case-insensitive on receipt.
+Values MUST be one of: `REQUEST`, `DELIVER`, `PAYMENT-REQUIRED`. Values SHOULD be uppercase on send, MUST be case-insensitive on receipt.
 
 ## 6. REQUEST
 
 ### 6.1 Header Requirements
 
-- MUST include `X-Mailpay-State: REQUEST`
+- MUST include `X-Envelopay-State: REQUEST`
 - MUST include `Message-ID`
 - SHOULD be DKIM-signed
 - MUST NOT include `In-Reply-To` unless continuing an existing negotiation
@@ -123,7 +98,7 @@ From: alice-agent@alice.dev
 To: review-agent@codereviews.cc
 Subject: Review PR #417
 Message-ID: <req-1234@alice.dev>
-X-Mailpay-State: REQUEST
+X-Envelopay-State: REQUEST
 DKIM-Signature: v=1; a=rsa-sha256; d=alice.dev; ...
 Content-Type: multipart/mixed; boundary="mp"
 
@@ -150,7 +125,7 @@ Content-Type: application/json; charset=utf-8
 
 ### 7.1 Header Requirements
 
-- MUST include `X-Mailpay-State: DELIVER`
+- MUST include `X-Envelopay-State: DELIVER`
 - MUST include `Message-ID`
 - MUST include `In-Reply-To` referencing the REQUEST's `Message-ID`
 - MUST include `References` containing the transaction thread chain
@@ -172,7 +147,7 @@ Subject: Re: Review PR #417
 Message-ID: <deliver-5678@codereviews.cc>
 In-Reply-To: <req-1234@alice.dev>
 References: <req-1234@alice.dev>
-X-Mailpay-State: DELIVER
+X-Envelopay-State: DELIVER
 DKIM-Signature: v=1; a=rsa-sha256; d=codereviews.cc; ...
 Content-Type: multipart/mixed; boundary="mp"
 
@@ -196,7 +171,7 @@ Content-Type: application/json; charset=utf-8
 When a receiver gets a task without payment, it MAY reply with payment terms:
 
 ```
-X-Mailpay-State: PAYMENT-REQUIRED
+X-Envelopay-State: PAYMENT-REQUIRED
 ```
 
 ```json
@@ -214,14 +189,14 @@ The sender resubmits with payment attached. This mirrors HTTP 402.
 
 ### 9.1 Requirements
 
-- Senders SHOULD DKIM-sign all mailpay messages.
-- Receivers SHOULD verify DKIM on every mailpay message.
+- Senders SHOULD DKIM-sign all envelopay messages.
+- Receivers SHOULD verify DKIM on every envelopay message.
 - Receivers MUST record DKIM verification outcome alongside the transaction.
 - Receivers MAY reject or downgrade trust for messages without valid DKIM.
 
 ### 9.2 Semantics
 
-DKIM proves that a domain-authenticated sender originated the message and that the body has not been altered in transit. Mailpay uses DKIM as provenance — a tamper-evident signed transcript — not as consensus.
+DKIM proves that a domain-authenticated sender originated the message and that the body has not been altered in transit. Envelopay uses DKIM as provenance — a tamper-evident signed transcript — not as consensus.
 
 DKIM does not bind to a wallet. Higher-layer identity binding (ZK Email, EAS) is out of scope.
 
@@ -256,12 +231,12 @@ The transaction thread is the source of truth. Implementations SHOULD detect and
 
 ### 12.1 Minimum Conforming Implementation
 
-A conforming mailpay implementation MUST:
+A conforming envelopay implementation MUST:
 
 - Send and receive RFC 5322 email
 - Parse MIME messages
-- Support `REQUEST` and `DELIVER`
-- Require `X-Mailpay-State` header
+- Support `REQUEST`, `DELIVER`, and `PAYMENT-REQUIRED`
+- Require `X-Envelopay-State` header
 - Parse REQUEST JSON with `amount`, `token`, `chain`, `proof`
 - Parse DELIVER JSON with `settlement`
 - Maintain thread linkage with `Message-ID`, `In-Reply-To`, `References`
@@ -270,19 +245,18 @@ A conforming mailpay implementation MUST:
 
 ### 12.2 x402 Compatibility
 
-Mailpay is compatible with the [x402 specification](https://www.x402.org/). The `X-Payment` and `X-Payment-Response` headers from the existing mailpay implementation are accepted as aliases for `X-Mailpay-State: REQUEST` and `X-Mailpay-State: DELIVER` respectively.
+Envelopay is compatible with the [x402 specification](https://www.x402.org/). The `X-Payment` and `X-Payment-Response` headers from the existing envelopay implementation are accepted as aliases for `X-Envelopay-State: REQUEST` and `X-Envelopay-State: DELIVER` respectively.
 
 ## 13. Application Concerns
 
 The following are explicitly out of scope for the protocol and left to application implementations:
 
-- Refund policies
-- Invoice IDs and order references
-- Milestone tracking and partial completion
-- Dispute resolution procedures
-- Escrow contract logic
-- Trust scoring and reputation
-- Wallet-email identity binding
-- Tax and compliance reporting
+- **Trust and discovery** — who to send to, reputation scoring, attestation graphs. Trust is a filter on the address book, not a protocol state. See [Proof of Trust](https://june.kim/proof-of-trust).
+- **Escrow, disputes, and arbitration** — applications MAY build escrow contracts, multi-step workflows, or dispute resolution on top of envelopay. These are application-layer protocols, not envelopay states.
+- **Refund policies** — a refund is a new REQUEST in the reverse direction, or an application-layer agreement. The protocol does not distinguish refunds from payments.
+- **Invoice IDs and order references** — put them in the `task` object.
+- **Milestone tracking and partial completion** — application sends multiple REQUESTs, one per milestone.
+- **Wallet-email identity binding** — see [ZK Email](https://docs.zk.email/), [EAS](https://attest.org/).
+- **Tax and compliance reporting** — application concern.
 
 The protocol carries proofs. Applications decide policy.

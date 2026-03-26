@@ -1,5 +1,5 @@
 [project]
-name = "mailpay"
+name = "envelopay"
 version = "0.1.0"
 description = "Agent-to-agent payments over email. x402 headers on SMTP."
 requires-python = ">=3.11"

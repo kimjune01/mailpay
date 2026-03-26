@@ -1,8 +1,8 @@
 # The Stack
 
-Composable open-source components for the full mailpay protocol. The email spec (payment proof format, lifecycle state machine) is the protocol layer. Everything below is infrastructure you compose from existing projects.
+Composable open-source components for the full envelopay protocol. The email spec (payment proof format, lifecycle state machine) is the protocol layer. Everything below is infrastructure you compose from existing projects.
 
-License column shows copyleft (GPL/AGPL/EPL), permissive (MIT/Apache), proprietary, or open standard (RFC). mailpay itself is AGPL-3.0.
+License column shows copyleft (GPL/AGPL/EPL), permissive (MIT/Apache), proprietary, or open standard (RFC). envelopay itself is AGPL-3.0.
 
 ## Settlement
 
@@ -10,7 +10,7 @@ License column shows copyleft (GPL/AGPL/EPL), permissive (MIT/Apache), proprieta
 |-----------|-------------|---------|------|
 | Solana SPL Token Program | USDC transfers, $0.0004/tx | Apache 2.0 | [docs](https://spl.solana.com/token) |
 | OpenZeppelin Escrow | Timelocked pull-payment for refunds | MIT | [docs](https://docs.openzeppelin.com/contracts) |
-| Sequential milestone payments | Each milestone is a separate mailpay email — no streaming contract needed | — | [Certified Mail](https://june.kim/certified-mail) |
+| Sequential milestone payments | Each milestone is a separate envelopay email — no streaming contract needed | — | [Certified Mail](https://june.kim/certified-mail) |
 
 ## Identity & Trust
 
@@ -73,7 +73,7 @@ License column shows copyleft (GPL/AGPL/EPL), permissive (MIT/Apache), proprieta
 
 6 of ~20 components are copyleft. Accounting is the strongest layer (3/4 copyleft). Settlement and identity are almost entirely permissive — crypto projects default to MIT/Apache by convention. Agent infrastructure is mostly proprietary, but the self-hosted path (Postfix + Dovecot + raw IMAP/SMTP) is copyleft all the way down.
 
-The protocol layers (SMTP, DKIM, MIME, DSN, MDN, ARC) are open RFCs — no license needed, anyone can implement. mailpay itself is AGPL-3.0. The copyleft gap is in settlement libraries and identity tooling, where no copyleft alternatives exist yet.
+The protocol layers (SMTP, DKIM, MIME, DSN, MDN, ARC) are open RFCs — no license needed, anyone can implement. envelopay itself is AGPL-3.0. The copyleft gap is in settlement libraries and identity tooling, where no copyleft alternatives exist yet.
 
 ## The Spec (in progress)
 
