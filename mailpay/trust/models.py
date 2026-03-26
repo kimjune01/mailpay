@@ -111,13 +111,23 @@ class Revocation:
         )
 
 
+def domain_from_email(email: str) -> str:
+    """Extract domain from email address. If no @, treat as domain."""
+    at = email.rfind("@")
+    return email[at + 1:] if at >= 0 else email
+
+
 @dataclass
 class Edge:
-    """An edge in the trust graph between two nodes."""
-    source: str  # attestor email
-    target: str  # subject email
+    """A directed edge in the trust graph between two domain nodes.
+
+    Bilateral attestations create two edges (A→B and B→A).
+    Unilateral attestations create one edge (attestor→subject).
+    """
+    from_domain: str
+    to_domain: str
     attestation_id: str
     attestation_type: str
-    bilateral: bool = False  # True if both parties confirmed
+    kind: str = "bilateral"  # "bilateral" or "unilateral"
     timestamp: str = ""
     fields: dict[str, Any] = field(default_factory=dict)

@@ -1,6 +1,6 @@
 """Test trust layer: attestations, exchange, curator."""
 
-from mailpay.trust.models import Attestation, Confirmation, Revocation
+from mailpay.trust.models import Attestation, Confirmation, Revocation, domain_from_email
 from mailpay.trust.exchange import Exchange
 from mailpay.trust.curator import (
     Curator, has_payment_history, has_min_endorsements,
@@ -32,7 +32,12 @@ def _google_rating() -> Attestation:
     )
 
 
-# --- Attestation model tests ---
+# --- Model tests ---
+
+def test_domain_from_email():
+    assert domain_from_email("merchant@example.com") == "example.com"
+    assert domain_from_email("example.com") == "example.com"
+
 
 def test_attestation_serialization():
     att = _stripe_attestation()
@@ -80,29 +85,31 @@ def test_revocation_roundtrip():
 def test_unilateral_creates_edge_immediately():
     ex = Exchange()
     att = _google_rating()
-    edge = ex.submit_attestation(att)
-    assert edge is not None
-    assert not edge.bilateral
-    assert edge.target == "restaurant@example.com"
+    edges = ex.submit_attestation(att)
+    assert len(edges) == 1
+    assert edges[0].kind == "unilateral"
+    assert edges[0].to_domain == "example.com"
+    assert edges[0].from_domain == "google.com"
     assert ex.edge_count == 1
 
 
 def test_bilateral_requires_confirmation():
     ex = Exchange()
     att = _stripe_attestation()
-    edge = ex.submit_attestation(att)
-    assert edge is None  # bilateral type, needs confirmation
-    assert ex.pending_count == 1
+    edges = ex.submit_attestation(att)
+    assert len(edges) == 0  # bilateral, needs confirmation
     assert ex.edge_count == 0
 
     conf = Confirmation(
         attestation_id="stripe_merchant123_2026",
         confirmer="merchant@example.com",
     )
-    edge = ex.submit_confirmation(conf)
-    assert edge is not None
-    assert edge.bilateral
-    assert ex.edge_count == 1
+    edges = ex.submit_confirmation(conf)
+    assert len(edges) == 2  # two directed edges
+    assert ex.edge_count == 2
+    domains = {(e.from_domain, e.to_domain) for e in edges}
+    assert ("stripe.com", "example.com") in domains
+    assert ("example.com", "stripe.com") in domains
 
 
 def test_self_confirmation_rejected():
@@ -110,22 +117,31 @@ def test_self_confirmation_rejected():
     att = _stripe_attestation()
     ex.submit_attestation(att)
 
+    # Confirmer from same domain as attestor
     conf = Confirmation(
         attestation_id="stripe_merchant123_2026",
-        confirmer="attestations@stripe.com",  # attestor confirming themselves
+        confirmer="other@stripe.com",
     )
-    edge = ex.submit_confirmation(conf)
-    assert edge is None
+    edges = ex.submit_confirmation(conf)
+    assert len(edges) == 0
     assert ex.edge_count == 0
 
 
-def test_revocation_removes_edge():
+def test_duplicate_attestation_id_rejected():
+    ex = Exchange()
+    att = _stripe_attestation()
+    ex.submit_attestation(att)
+    edges = ex.submit_attestation(att)  # duplicate
+    assert len(edges) == 0
+
+
+def test_revocation_removes_edges():
     ex = Exchange()
     att = _stripe_attestation()
     ex.submit_attestation(att)
     conf = Confirmation(attestation_id="stripe_merchant123_2026", confirmer="merchant@example.com")
     ex.submit_confirmation(conf)
-    assert ex.edge_count == 1
+    assert ex.edge_count == 2
 
     rev = Revocation(
         attestation_id="stripe_merchant123_2026",
@@ -136,19 +152,7 @@ def test_revocation_removes_edge():
     assert ex.edge_count == 0
 
 
-def test_revoked_attestation_cannot_be_resubmitted():
-    ex = Exchange()
-    att = _stripe_attestation()
-    ex.submit_attestation(att)
-    rev = Revocation(attestation_id="stripe_merchant123_2026", revoker="merchant@example.com")
-    ex.submit_revocation(rev)
-
-    edge = ex.submit_attestation(att)
-    assert edge is None
-    assert ex.edge_count == 0
-
-
-def test_get_edges_for_node():
+def test_get_edges_for_domain():
     ex = Exchange()
     att = _stripe_attestation()
     ex.submit_attestation(att)
@@ -156,13 +160,32 @@ def test_get_edges_for_node():
     ex.submit_confirmation(conf)
 
     rating = _google_rating()
-    # Make subject the same merchant for this test
     rating.subject = "merchant@example.com"
     rating.attestation_id = "google_merchant_2026"
     ex.submit_attestation(rating)
 
-    edges = ex.get_edges("merchant@example.com")
-    assert len(edges) == 2
+    edges = ex.get_edges("example.com")
+    assert len(edges) == 3  # 2 bilateral + 1 unilateral
+
+
+def test_get_log():
+    ex = Exchange()
+    ex.submit_attestation(_stripe_attestation())
+    conf = Confirmation(attestation_id="stripe_merchant123_2026", confirmer="merchant@example.com")
+    ex.submit_confirmation(conf)
+
+    log = ex.get_log()
+    assert len(log) == 2
+    assert log[0]["action"] == "attestation"
+    assert log[1]["action"] == "confirm"
+
+
+def test_get_attestation():
+    ex = Exchange()
+    ex.submit_attestation(_stripe_attestation())
+    att = ex.get_attestation("stripe_merchant123_2026")
+    assert att is not None
+    assert att.attestor == "attestations@stripe.com"
 
 
 # --- Curator tests ---
@@ -177,7 +200,7 @@ def test_curator_payment_history():
     curator = Curator(name="commerce-verified")
     curator.require(has_payment_history(min_years=2))
     allowed = curator.evaluate(ex)
-    assert "merchant@example.com" in allowed
+    assert "example.com" in allowed
 
 
 def test_curator_rejects_insufficient_history():
@@ -191,7 +214,7 @@ def test_curator_rejects_insufficient_history():
     curator = Curator(name="strict")
     curator.require(has_payment_history(min_years=2))
     allowed = curator.evaluate(ex)
-    assert "merchant@example.com" not in allowed
+    assert "example.com" not in allowed
 
 
 def test_curator_platform_rating():
@@ -201,12 +224,11 @@ def test_curator_platform_rating():
     curator = Curator(name="quality")
     curator.require(has_platform_rating(min_rating=4.0))
     allowed = curator.evaluate(ex)
-    assert "restaurant@example.com" in allowed
+    assert "example.com" in allowed
 
 
 def test_curator_multiple_criteria():
     ex = Exchange()
-    # Merchant has payment history
     att = _stripe_attestation()
     ex.submit_attestation(att)
     conf = Confirmation(attestation_id="stripe_merchant123_2026", confirmer="merchant@example.com")
@@ -216,9 +238,24 @@ def test_curator_multiple_criteria():
     curator.require(has_payment_history(min_years=1))
     curator.require(has_bilateral_edges(min_count=1))
     allowed = curator.evaluate(ex)
-    assert "merchant@example.com" in allowed
+    assert "example.com" in allowed
 
     # Add a criterion that fails
     curator.require(has_min_endorsements(count=5))
     allowed = curator.evaluate(ex)
-    assert "merchant@example.com" not in allowed
+    assert "example.com" not in allowed
+
+
+def test_license_is_unilateral():
+    ex = Exchange()
+    att = Attestation(
+        attestation_id="license_plumber_2026",
+        attestation_type="license",
+        subject="plumber@example.com",
+        attestor="registry@state.gov",
+        timestamp="2026-01-01",
+        standard_fields={"license_type": "plumbing", "jurisdiction": "OR"},
+    )
+    edges = ex.submit_attestation(att)
+    assert len(edges) == 1
+    assert edges[0].kind == "unilateral"

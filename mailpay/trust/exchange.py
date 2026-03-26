@@ -1,103 +1,140 @@
-"""Trust exchange: receive attestation emails, verify DKIM, build graph."""
+"""Trust exchange: in-memory implementation (toy). Swap for HTTP client in production."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from mailpay.trust.models import Attestation, Confirmation, Revocation, Edge
+from mailpay.trust.models import (
+    Attestation, Confirmation, Revocation, Edge, domain_from_email,
+)
+
+# Unilateral types create edges immediately without subject confirmation
+_UNILATERAL_TYPES = {"platform_rating", "license"}
 
 
 @dataclass
 class Exchange:
     """An append-only attestation ledger.
 
-    Receives attestation emails, matches bilateral confirmations,
-    processes revocations, and exposes the trust graph.
+    Nodes are domains, not email addresses. Bilateral attestations create
+    two directed edges. The exchange does not compute weights or trust
+    scores — that's the curator's job.
     """
-    # Pending attestations awaiting bilateral confirmation
     _pending: dict[str, Attestation] = field(default_factory=dict)
-    # Live edges in the graph
-    _edges: dict[str, Edge] = field(default_factory=dict)
-    # Revoked attestation IDs
-    _revoked: set[str] = field(default_factory=set)
+    _edges: list[Edge] = field(default_factory=list)
+    _attestation_ids: set[str] = field(default_factory=set)  # all seen IDs (PK constraint)
+    _log: list[dict] = field(default_factory=list)
 
-    def submit_attestation(self, attestation: Attestation, dkim_verified: bool = False) -> Edge | None:
-        """Submit an attestation. Returns an Edge if unilateral or already confirmed."""
-        if attestation.attestation_id in self._revoked:
-            return None
+    def submit_attestation(self, attestation: Attestation) -> list[Edge]:
+        """Submit an attestation. Returns created edges (empty for bilateral pending)."""
+        att_id = attestation.attestation_id
+        if att_id in self._attestation_ids:
+            return []
 
-        # Store as pending for bilateral confirmation
-        self._pending[attestation.attestation_id] = attestation
+        self._attestation_ids.add(att_id)
+        self._pending[att_id] = attestation
+        self._log.append({"action": "attestation", "id": att_id, "attestor": attestation.attestor})
 
-        # Unilateral attestations create edges immediately
-        # (platform_rating, license — subject doesn't confirm)
-        if attestation.attestation_type in ("platform_rating", "license"):
-            return self._create_edge(attestation, bilateral=False)
+        if attestation.attestation_type in _UNILATERAL_TYPES:
+            edges = self._create_edges(attestation, kind="unilateral")
+            return edges
 
-        return None
+        return []
 
-    def submit_confirmation(self, confirmation: Confirmation, dkim_verified: bool = False) -> Edge | None:
-        """Submit a bilateral confirmation. Returns an Edge if the attestation exists."""
+    def submit_confirmation(self, confirmation: Confirmation) -> list[Edge]:
+        """Submit a bilateral confirmation. Returns two directed edges on success."""
         att_id = confirmation.attestation_id
-        if att_id in self._revoked:
-            return None
         if att_id not in self._pending:
-            return None
+            return []
 
         attestation = self._pending[att_id]
 
-        # Confirmer must be the subject (not the attestor confirming themselves)
-        if confirmation.confirmer == attestation.attestor:
-            return None
+        # Reject self-confirmation: confirmer domain must differ from attestor domain
+        attestor_domain = domain_from_email(attestation.attestor)
+        confirmer_domain = domain_from_email(confirmation.confirmer)
+        if confirmer_domain == attestor_domain:
+            return []
 
         attestation.confirmed = True
-        return self._create_edge(attestation, bilateral=True)
+        self._log.append({"action": "confirm", "id": att_id, "confirmer": confirmation.confirmer})
+        return self._create_edges(attestation, kind="bilateral")
 
     def submit_revocation(self, revocation: Revocation) -> bool:
         """Revoke an attestation. Either party can unlink."""
         att_id = revocation.attestation_id
 
-        # Must be from attestor or subject
         if att_id in self._pending:
             att = self._pending[att_id]
-            if revocation.revoker not in (att.attestor, att.subject):
+            revoker_domain = domain_from_email(revocation.revoker)
+            attestor_domain = domain_from_email(att.attestor)
+            subject_domain = domain_from_email(att.subject)
+            if revoker_domain not in (attestor_domain, subject_domain):
                 return False
 
-        self._revoked.add(att_id)
         self._pending.pop(att_id, None)
-        self._edges.pop(att_id, None)
+        self._edges = [e for e in self._edges if e.attestation_id != att_id]
+        self._log.append({"action": "revoke", "id": att_id, "revoker": revocation.revoker})
         return True
 
-    def _create_edge(self, attestation: Attestation, bilateral: bool) -> Edge:
-        """Create and store a graph edge from an attestation."""
-        # Build published fields
+    def _create_edges(self, attestation: Attestation, kind: str) -> list[Edge]:
+        """Create directed edges from an attestation."""
         fields = dict(attestation.standard_fields)
         for key in attestation.published_fields:
             if key in attestation.optional_fields:
                 fields[key] = attestation.optional_fields[key]
 
-        edge = Edge(
-            source=attestation.attestor,
-            target=attestation.subject,
-            attestation_id=attestation.attestation_id,
-            attestation_type=attestation.attestation_type,
-            bilateral=bilateral,
-            timestamp=attestation.timestamp,
-            fields=fields,
-        )
-        self._edges[attestation.attestation_id] = edge
-        return edge
+        attestor_domain = domain_from_email(attestation.attestor)
+        subject_domain = domain_from_email(attestation.subject)
 
-    def get_edges(self, node: str) -> list[Edge]:
-        """Get all edges involving a node (as source or target)."""
+        edges = []
+        if kind == "bilateral":
+            # Two directed edges
+            for from_d, to_d in [(attestor_domain, subject_domain), (subject_domain, attestor_domain)]:
+                edge = Edge(
+                    from_domain=from_d,
+                    to_domain=to_d,
+                    attestation_id=attestation.attestation_id,
+                    attestation_type=attestation.attestation_type,
+                    kind="bilateral",
+                    timestamp=attestation.timestamp,
+                    fields=fields,
+                )
+                self._edges.append(edge)
+                edges.append(edge)
+        else:
+            # One directed edge
+            edge = Edge(
+                from_domain=attestor_domain,
+                to_domain=subject_domain,
+                attestation_id=attestation.attestation_id,
+                attestation_type=attestation.attestation_type,
+                kind="unilateral",
+                timestamp=attestation.timestamp,
+                fields=fields,
+            )
+            self._edges.append(edge)
+            edges.append(edge)
+
+        return edges
+
+    def get_edges(self, domain: str) -> list[Edge]:
+        """Get all edges involving a domain (as source or target)."""
         return [
-            e for e in self._edges.values()
-            if e.source == node or e.target == node
+            e for e in self._edges
+            if e.from_domain == domain or e.to_domain == domain
         ]
 
     def get_graph(self) -> list[Edge]:
-        """Get the full trust graph."""
-        return list(self._edges.values())
+        """Get the full edge set."""
+        return list(self._edges)
+
+    def get_attestation(self, att_id: str) -> Attestation | None:
+        """Get a single attestation by ID."""
+        return self._pending.get(att_id)
+
+    def get_log(self, limit: int = 100, since: int = 0) -> list[dict]:
+        """Get append-only log entries for curator sync."""
+        return self._log[since:][:limit]
 
     @property
     def edge_count(self) -> int:
@@ -105,13 +142,4 @@ class Exchange:
 
     @property
     def pending_count(self) -> int:
-        return len(self._pending)
-
-    def trust_check(self, sender: str, min_bilateral: int = 1) -> bool:
-        """Check if a sender has enough bilateral edges to be trusted.
-
-        Used by agent/ before accepting paid work from an unknown sender.
-        """
-        edges = self.get_edges(sender)
-        bilateral = [e for e in edges if e.bilateral]
-        return len(bilateral) >= min_bilateral
+        return len([a for a in self._pending.values() if not a.confirmed])

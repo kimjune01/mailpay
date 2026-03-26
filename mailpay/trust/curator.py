@@ -19,7 +19,8 @@ class Curator:
     """A trust curator that filters the exchange graph into an allowlist.
 
     Curators compete on criteria quality. Publishers subscribe to curators
-    whose standards match their audience.
+    whose standards match their audience. The exchange serves edges;
+    curators interpret them.
     """
     name: str
     _criteria: list[Criterion] = field(default_factory=list)
@@ -29,14 +30,12 @@ class Curator:
         self._criteria.append(criterion)
 
     def evaluate(self, exchange: Exchange) -> set[str]:
-        """Pull the exchange graph and return the set of allowed nodes."""
-        # Collect all nodes
+        """Pull the exchange graph and return the set of allowed domains."""
         nodes: set[str] = set()
         for edge in exchange.get_graph():
-            nodes.add(edge.source)
-            nodes.add(edge.target)
+            nodes.add(edge.from_domain)
+            nodes.add(edge.to_domain)
 
-        # Evaluate each node against all criteria
         allowed: set[str] = set()
         for node in nodes:
             edges = exchange.get_edges(node)
@@ -49,10 +48,10 @@ class Curator:
 # --- Built-in criteria ---
 
 def has_payment_history(min_years: int = 1) -> Criterion:
-    """Require at least one payment_processor attestation with sufficient duration."""
+    """Require at least one bilateral payment_processor edge with sufficient duration."""
     def check(edges: list[Edge]) -> bool:
         for e in edges:
-            if e.attestation_type == "payment_processor" and e.bilateral:
+            if e.attestation_type == "payment_processor" and e.kind == "bilateral":
                 duration = e.fields.get("duration_years", 0)
                 if duration >= min_years:
                     return True
@@ -61,11 +60,11 @@ def has_payment_history(min_years: int = 1) -> Criterion:
 
 
 def has_min_endorsements(count: int = 3) -> Criterion:
-    """Require at least N bilateral customer endorsements."""
+    """Require at least N bilateral customer endorsement edges."""
     def check(edges: list[Edge]) -> bool:
         endorsements = [
             e for e in edges
-            if e.attestation_type == "customer_endorsement" and e.bilateral
+            if e.attestation_type == "customer_endorsement" and e.kind == "bilateral"
         ]
         return len(endorsements) >= count
     return check
@@ -84,7 +83,7 @@ def has_platform_rating(min_rating: float = 4.0) -> Criterion:
 
 
 def edges_within_age(max_age_days: int = 365) -> Criterion:
-    """Only count edges newer than max_age_days."""
+    """Require at least one edge newer than max_age_days."""
     def check(edges: list[Edge]) -> bool:
         now = datetime.now(timezone.utc)
         for e in edges:
@@ -102,8 +101,8 @@ def edges_within_age(max_age_days: int = 365) -> Criterion:
 
 
 def has_bilateral_edges(min_count: int = 1) -> Criterion:
-    """Require at least N bilateral (mutually confirmed) edges."""
+    """Require at least N bilateral (mutually confirmed) directed edges."""
     def check(edges: list[Edge]) -> bool:
-        bilateral = [e for e in edges if e.bilateral]
+        bilateral = [e for e in edges if e.kind == "bilateral"]
         return len(bilateral) >= min_count
     return check
