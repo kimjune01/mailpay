@@ -2,36 +2,19 @@
 
 Agent-to-agent payments over email. The thread is the ledger.
 
-## Transport
-
-Every envelopay message is a valid RFC 5322 email with:
-
-- `X-Envelopay-Type` header (the message type, case-insensitive on receipt)
-- `Subject: TYPE | note` (type echoed in subject for human readability)
-- JSON body with `v` (version string) and `type` (lowercase type name)
-- `In-Reply-To` and `References` for all replies (standard email threading)
-- DKIM signature (sender domain proves provenance)
-
-## Message Types
+## How to send each message type
 
 Seven types. Two negotiate. Four transact. One handles errors.
 
-| Type | Direction | Purpose |
-|------|-----------|---------|
-| `WHICH` | A → B | "What do you accept?" |
-| `METHODS` | B → A | Accepted rails, wallets, pricing |
-| `PAY` | A → B | Payment proof, no task attached |
-| `ORDER` | A → B | Task + payment proof |
-| `FULFILL` | B → A | Work product + settlement proof |
-| `INVOICE` | B → A | "You owe me this, here's my wallet" |
-| `OOPS` | either | Something went wrong |
+Every message is an email with a JSON body. Set the subject to `TYPE | note` and the `X-Envelopay-Type` header to the type. Always include `"v":"0.1.0"` in the JSON.
 
-## Negotiation
+### WHICH — ask what someone accepts
 
-### WHICH
-
-Asks what the receiver accepts. May include a task description for pricing.
-
+```
+To: agent@example.com
+Subject: WHICH
+X-Envelopay-Type: WHICH
+```
 ```json
 {"v":"0.1.0",
  "type":"which",
@@ -39,10 +22,16 @@ Asks what the receiver accepts. May include a task description for pricing.
  "task":{"description":"Review PR #417"}}
 ```
 
-### METHODS
+You'll get back a METHODS reply with their rails and wallets.
 
-Replies with accepted rails, wallets, and optionally a price.
+If you already know the receiver's wallet and rails, skip WHICH and send ORDER or PAY directly.
 
+### METHODS — reply with what you accept
+
+```
+Subject: METHODS | $0.50 USDC, Solana preferred
+X-Envelopay-Type: METHODS
+```
 ```json
 {"v":"0.1.0",
  "type":"methods",
@@ -59,14 +48,17 @@ Replies with accepted rails, wallets, and optionally a price.
  "fallback":"https://pay.stripe.com/c/cs_live_abc123"}
 ```
 
-When both parties already know each other's rails, skip WHICH/METHODS.
+### PAY — send money, no task
 
-## Transactions
+A tip, a split bill, a donation. Fire-and-forget. No reply expected.
 
-### PAY
+Move the money on-chain first, then send the email with the proof.
 
-Money with no task. A tip, a split bill, a donation. Fire-and-forget.
-
+```
+To: friend@example.com
+Subject: PAY | Dinner split
+X-Envelopay-Type: PAY
+```
 ```json
 {"v":"0.1.0",
  "type":"pay",
@@ -77,12 +69,15 @@ Money with no task. A tip, a split bill, a donation. Fire-and-forget.
  "proof":{"tx":"0x7a3f..."}}
 ```
 
-The money moves on-chain before the email is composed. The `proof` field carries rail-specific evidence (tx hash, signed intent, escrow receipt). The protocol transports proofs; it does not standardize the rail.
+### ORDER — send money with a task
 
-### ORDER
+Move the money on-chain first, then send the email with the task and the proof. You'll get back a FULFILL with the work product.
 
-Task + payment. Expects a FULFILL.
-
+```
+To: worker@example.com
+Subject: ORDER | Review PR #417
+X-Envelopay-Type: ORDER
+```
 ```json
 {"v":"0.1.0",
  "type":"order",
@@ -96,10 +91,14 @@ Task + payment. Expects a FULFILL.
  "proof":{"tx":"4vJ9..."}}
 ```
 
-### FULFILL
+### FULFILL — deliver the work
 
-Work product + settlement proof. Replies to an ORDER via `In-Reply-To`.
+Reply to the ORDER email. Include `In-Reply-To` referencing the ORDER's Message-ID.
 
+```
+Subject: FULFILL | Approved with 2 comments
+X-Envelopay-Type: FULFILL
+```
 ```json
 {"v":"0.1.0",
  "type":"fulfill",
@@ -111,10 +110,15 @@ Work product + settlement proof. Replies to an ORDER via `In-Reply-To`.
  "settlement":{"tx":"4vJ9...","verified":true,"block":285714200}}
 ```
 
-### INVOICE
+### INVOICE — bill someone
 
-"You owe me this." The recipient decides whether to pay. If they do, they send a PAY.
+"You owe me this, here's my wallet." The recipient decides whether to pay. If they do, they send a PAY.
 
+```
+To: client@example.com
+Subject: INVOICE | Additional auth hardening
+X-Envelopay-Type: INVOICE
+```
 ```json
 {"v":"0.1.0",
  "type":"invoice",
@@ -125,12 +129,14 @@ Work product + settlement proof. Replies to an ORDER via `In-Reply-To`.
  "wallet":"6dL6n77jJFWq4bu3cQp57H8rMUPEXu7uYN1XApPxpUif"}
 ```
 
-## Errors
-
-### OOPS
+### OOPS — something went wrong
 
 Any message can get an OOPS back. The `note` tells a human; the `error` object tells an agent.
 
+```
+Subject: OOPS | Payment not found on-chain
+X-Envelopay-Type: OOPS
+```
 ```json
 {"v":"0.1.0",
  "type":"oops",
@@ -138,22 +144,11 @@ Any message can get an OOPS back. The `note` tells a human; the `error` object t
  "error":{"code":"tx_not_found","tx":"0x3a7f..."}}
 ```
 
-Common error codes:
+Error codes: `tx_not_found`, `amount_mismatch`, `dkim_failed`, `unknown_type`, `insufficient_funds`, `missing_wallet`.
 
-| Code | Meaning |
-|------|---------|
-| `tx_not_found` | Transaction doesn't exist on-chain |
-| `amount_mismatch` | On-chain amount doesn't match claimed amount |
-| `dkim_failed` | Sender can't be authenticated |
-| `unknown_type` | Subject looks like a protocol message but the type isn't recognized |
-| `insufficient_funds` | Can't fulfill a refund or payment |
-| `missing_wallet` | Invoice or refund request missing wallet address |
+If you receive a subject that matches `^[A-Z]+(\s*\|.*)?$` but the keyword isn't one of the seven types, reply OOPS with `unknown_type` and the list of supported types.
 
-### Protocol mismatch
-
-If the subject matches `^[A-Z]+(\s*\|.*)?$` but the keyword isn't one of the seven types, reply OOPS with `unknown_type`, the list of supported types, and a link to the spec.
-
-No message in the protocol requires a response. Silence is always valid. OOPS is a courtesy, not an obligation.
+No message requires a response. Silence is always valid. OOPS is a courtesy.
 
 ## Flows
 
@@ -169,13 +164,46 @@ No message in the protocol requires a response. Silence is always valid. OOPS is
 
 ## Verification
 
-Receivers must verify before doing work:
+Before doing work, verify:
 
 1. Check DKIM signature on the incoming email
 2. Verify the proof on-chain (tx exists, amount matches, recipient matches)
 3. Check for replay (track processed Message-IDs)
 
-An ORDER without a matching FULFILL is a DKIM-signed, timestamped record of non-delivery. The protocol doesn't prevent fraud — it makes fraud auditable.
+## Example: AgentMail
+
+Any email API works. Here's AgentMail as one example.
+
+**Send a WHICH:**
+
+```bash
+curl -X POST https://api.agentmail.to/v0/inboxes/me@agentmail.to/threads \
+  -H "Authorization: Bearer $AGENTMAIL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "to": ["worker@agentmail.to"],
+    "subject": "WHICH | Code review",
+    "text": "{\"v\":\"0.1.0\",\"type\":\"which\",\"note\":\"Code review\",\"task\":{\"description\":\"Review PR #417\"}}",
+    "headers": {"X-Envelopay-Type": "WHICH"}
+  }'
+```
+
+**Reply to a thread (FULFILL, METHODS, OOPS):**
+
+```bash
+curl -X POST https://api.agentmail.to/v0/inboxes/me@agentmail.to/threads/$THREAD_ID/reply \
+  -H "Authorization: Bearer $AGENTMAIL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "subject": "FULFILL | Done",
+    "text": "{\"v\":\"0.1.0\",\"type\":\"fulfill\",\"note\":\"Done\",\"result\":{\"summary\":\"Approved\"}}",
+    "headers": {"X-Envelopay-Type": "FULFILL"}
+  }'
+```
+
+**Receive via webhook:**
+
+Register a webhook URL at AgentMail. Incoming emails arrive as POST with a `message` object containing `from_`, `subject`, `text`, `thread_id`, and `message_id`. Parse the JSON body, check the `X-Envelopay-Type` header or the subject keyword, and route by type.
 
 ## What the protocol doesn't do
 
@@ -188,7 +216,7 @@ An ORDER without a matching FULFILL is a DKIM-signed, timestamped record of non-
 
 Discovery, trust, escrow, disputes, refunds — application concerns. The protocol carries proofs. Applications decide policy.
 
-## Spec
+## Further reading
 
 - [Certified Mail](https://june.kim/certified-mail) — the semantics
 - [Sent](https://june.kim/sent) — the user story
