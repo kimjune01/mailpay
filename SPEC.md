@@ -1,262 +1,194 @@
-# Envelopay Protocol Specification
+# Envelopay Protocol v0.1.0
 
-Version: 0.1.0-draft
+Agent-to-agent payments over email. The thread is the ledger.
 
-## 1. Scope
+## Transport
 
-Envelopay is an SMTP-native protocol for agent-to-agent paid requests over email.
+Every envelopay message is a valid RFC 5322 email with:
 
-This specification defines:
+- `X-Envelopay-Type` header (the message type, case-insensitive on receipt)
+- `Subject: TYPE | note` (type echoed in subject for human readability)
+- JSON body with `v` (version string) and `type` (lowercase type name)
+- `In-Reply-To` and `References` for all replies (standard email threading)
+- DKIM signature (sender domain proves provenance)
 
-- Two protocol states: REQUEST and DELIVER
-- A payment-proof JSON MIME part
-- A settlement-proof JSON MIME part
-- DKIM-based provenance requirements
-- Threading requirements using `Message-ID`, `In-Reply-To`, and `References`
-- A rail-agnostic proof model with fallback payment links
+## Message Types
 
-Envelopay does not define a specific blockchain, payment rail, wallet system, escrow contract, or proof format. It defines how proofs are transported and linked in an email transaction log.
+Seven types. Two negotiate. Four transact. One handles errors.
 
-## 2. Terminology
+| Type | Direction | Purpose |
+|------|-----------|---------|
+| `WHICH` | A → B | "What do you accept?" |
+| `METHODS` | B → A | Accepted rails, wallets, pricing |
+| `PAY` | A → B | Payment proof, no task attached |
+| `ORDER` | A → B | Task + payment proof |
+| `FULFILL` | B → A | Work product + settlement proof |
+| `INVOICE` | B → A | "You owe me this, here's my wallet" |
+| `OOPS` | either | Something went wrong |
 
-The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are interpreted as described in RFC 2119.
+## Negotiation
 
-- **Proof**: machine-verifiable evidence that value has been authorized, reserved, or transferred
-- **Settlement proof**: machine-verifiable evidence that the transaction was settled or finalized
-- **Transaction thread**: the ordered email conversation representing one envelopay transaction
-- **Fallback**: a payment URL for counterparties without wallet infrastructure
+### WHICH
 
-## 3. Design Principles
-
-- SMTP-native. MIME-native. DKIM-anchored.
-- The email thread is the transaction log.
-- The protocol mandates a proof, not a rail.
-- Two states: REQUEST and DELIVER. That's it.
-- Trust is a discovery filter, not a protocol layer. You decide who to email before you send. The protocol is the same regardless of trust level.
-
-## 4. Message Model
-
-Each envelopay message:
-
-- MUST be a valid RFC 5322 email
-- MUST include `Message-ID`
-- MUST include `X-Envelopay-State`
-- MUST carry the envelopay payload as a `Content-Type: application/json` MIME part
-- SHOULD be DKIM-signed by the sender domain
-- MUST use `In-Reply-To` and `References` for all messages after the first
-
-## 5. States
-
-Conforming implementations MUST support exactly two states:
-
-| State | Direction | Semantics |
-|-------|-----------|-----------|
-| `REQUEST` | Payer → Worker | Initiates a paid task with payment proof |
-| `DELIVER` | Worker → Payer | Completes the task with settlement proof |
-
-Two emails. One transaction. The protocol does not define additional states.
-
-Trust decisions happen before the protocol starts. The payer chooses who to email based on reputation, attestation history, prior transactions, or any other signal. Once you decide to send, the protocol is always the same: REQUEST, DELIVER. You don't add escrow to a CashApp payment. You just don't pay people you don't trust.
-
-### 5.1 Header
-
-```
-X-Envelopay-State: REQUEST
-```
-
-Values MUST be one of: `REQUEST`, `DELIVER`, `PAYMENT-REQUIRED`. Values SHOULD be uppercase on send, MUST be case-insensitive on receipt.
-
-## 6. REQUEST
-
-### 6.1 Header Requirements
-
-- MUST include `X-Envelopay-State: REQUEST`
-- MUST include `Message-ID`
-- SHOULD be DKIM-signed
-- MUST NOT include `In-Reply-To` unless continuing an existing negotiation
-
-### 6.2 Payment-Proof JSON
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `amount` | string | Yes | Payment amount in smallest unit (e.g., `"500000"` = $0.50 USDC) |
-| `token` | string | Yes | Asset identifier (contract address or symbol) |
-| `chain` | string | Yes | Settlement chain identifier |
-| `proof` | any | Yes | Rail-specific proof material. Opaque to the protocol. |
-| `fallback` | string (URL) | No | Payment link for off-spec on-ramp (Stripe, PayPal, Cash App, etc.) |
-
-The `proof` field MAY be a signed intent, transfer authorization, escrow receipt, Lightning invoice, card gateway reference, or any other rail-specific artifact. The protocol transports proofs; it does not standardize the underlying rail.
-
-### 6.3 Task
-
-The JSON part SHOULD include a `task` field with a freeform object describing the work. No schema is mandated. Application-specific fields (invoice IDs, order references, metadata) go here.
-
-### 6.4 Example
-
-```
-From: alice-agent@alice.dev
-To: review-agent@codereviews.cc
-Subject: Review PR #417
-Message-ID: <req-1234@alice.dev>
-X-Envelopay-State: REQUEST
-DKIM-Signature: v=1; a=rsa-sha256; d=alice.dev; ...
-Content-Type: multipart/mixed; boundary="mp"
-
---mp
-Content-Type: text/plain; charset=utf-8
-
-Review PR #417 in github.com/alice/widget
-
---mp
-Content-Type: application/json; charset=utf-8
-
-{
-  "task": {"description": "Review PR #417", "repo": "github.com/alice/widget"},
-  "amount": "500000",
-  "token": "USDC",
-  "chain": "base",
-  "proof": {"type": "signed-intent", "payload": "0xabc...", "signature": "0xdef..."},
-  "fallback": "https://pay.stripe.com/c/cs_live_abc123"
-}
---mp--
-```
-
-## 7. DELIVER
-
-### 7.1 Header Requirements
-
-- MUST include `X-Envelopay-State: DELIVER`
-- MUST include `Message-ID`
-- MUST include `In-Reply-To` referencing the REQUEST's `Message-ID`
-- MUST include `References` containing the transaction thread chain
-- SHOULD be DKIM-signed
-
-### 7.2 Settlement-Proof JSON
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `settlement` | object | Yes | Rail-specific settlement proof. Opaque to the protocol. |
-| `result` | object | No | Freeform work product. |
-
-### 7.3 Example
-
-```
-From: review-agent@codereviews.cc
-To: alice-agent@alice.dev
-Subject: Re: Review PR #417
-Message-ID: <deliver-5678@codereviews.cc>
-In-Reply-To: <req-1234@alice.dev>
-References: <req-1234@alice.dev>
-X-Envelopay-State: DELIVER
-DKIM-Signature: v=1; a=rsa-sha256; d=codereviews.cc; ...
-Content-Type: multipart/mixed; boundary="mp"
-
---mp
-Content-Type: text/plain; charset=utf-8
-
-Approved with 2 comments.
-
---mp
-Content-Type: application/json; charset=utf-8
-
-{
-  "result": {"summary": "Approved with 2 comments"},
-  "settlement": {"type": "transfer", "tx": "0xSETTLE..."}
-}
---mp--
-```
-
-## 8. Payment Required (402)
-
-When a receiver gets a task without payment, it MAY reply with payment terms:
-
-```
-X-Envelopay-State: PAYMENT-REQUIRED
-```
+Asks what the receiver accepts. May include a task description for pricing.
 
 ```json
-{
-  "amount": "500000",
-  "token": "USDC",
-  "chain": "base",
-  "fallback": "https://pay.stripe.com/c/cs_live_abc123"
-}
+{"v":"0.1.0",
+ "type":"which",
+ "note":"Looking for a security-focused code review",
+ "task":{"description":"Review PR #417"}}
 ```
 
-The sender resubmits with payment attached. This mirrors HTTP 402.
+### METHODS
 
-## 9. DKIM Provenance
+Replies with accepted rails, wallets, and optionally a price.
 
-### 9.1 Requirements
+```json
+{"v":"0.1.0",
+ "type":"methods",
+ "note":"$0.50 USDC, Solana preferred",
+ "price":{"amount":"500000","currency":"USDC"},
+ "rails":[
+   {"chain":"solana",
+    "token":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "wallet":"6dL6n77jJFWq4bu3cQp57H8rMUPEXu7uYN1XApPxpUif"},
+   {"chain":"base",
+    "token":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "wallet":"0x1a2B..."}
+ ],
+ "fallback":"https://pay.stripe.com/c/cs_live_abc123"}
+```
 
-- Senders SHOULD DKIM-sign all envelopay messages.
-- Receivers SHOULD verify DKIM on every envelopay message.
-- Receivers MUST record DKIM verification outcome alongside the transaction.
-- Receivers MAY reject or downgrade trust for messages without valid DKIM.
+When both parties already know each other's rails, skip WHICH/METHODS.
 
-### 9.2 Semantics
+## Transactions
 
-DKIM proves that a domain-authenticated sender originated the message and that the body has not been altered in transit. Envelopay uses DKIM as provenance — a tamper-evident signed transcript — not as consensus.
+### PAY
 
-DKIM does not bind to a wallet. Higher-layer identity binding (ZK Email, EAS) is out of scope.
+Money with no task. A tip, a split bill, a donation. Fire-and-forget.
 
-## 10. Threading
+```json
+{"v":"0.1.0",
+ "type":"pay",
+ "note":"Dinner — my half",
+ "amount":"30000000",
+ "token":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+ "chain":"base",
+ "proof":{"tx":"0x7a3f..."}}
+```
 
-The email thread is the transaction log.
+The money moves on-chain before the email is composed. The `proof` field carries rail-specific evidence (tx hash, signed intent, escrow receipt). The protocol transports proofs; it does not standardize the rail.
 
-- The first message in a transaction (REQUEST) establishes the thread via `Message-ID`.
-- Every subsequent message MUST reference the thread via `In-Reply-To` and `References`.
-- Both parties hold the full log. No external state is required.
-- Implementations SHOULD persist raw headers and message linkage, not only parsed payloads.
+### ORDER
 
-## 11. Security Considerations
+Task + payment. Expects a FULFILL.
 
-### 11.1 Replay Protection
+```json
+{"v":"0.1.0",
+ "type":"order",
+ "note":"Review PR #417, focus on auth boundaries",
+ "task":{"description":"Review PR #417",
+         "repo":"github.com/alice/widget",
+         "scope":"security"},
+ "amount":"500000",
+ "token":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+ "chain":"solana",
+ "proof":{"tx":"4vJ9..."}}
+```
 
-Receivers MUST track processed `Message-ID` values and reject duplicates. Proof payloads SHOULD include replay-resistant semantics (nonces, expirations, recipient binding).
+### FULFILL
 
-### 11.2 Proof Validation
+Work product + settlement proof. Replies to an ORDER via `In-Reply-To`.
 
-Receivers MUST validate `proof` and `settlement` according to the chosen rail before taking irreversible action. The protocol transports opaque proofs — validation is the application's responsibility.
+```json
+{"v":"0.1.0",
+ "type":"fulfill",
+ "note":"Approved with 2 comments, one medium severity",
+ "result":{"summary":"Approved with 2 comments",
+           "findings":[{"file":"handler.go","line":47,
+                        "severity":"medium",
+                        "finding":"Session token not validated before use"}]},
+ "settlement":{"tx":"4vJ9...","verified":true,"block":285714200}}
+```
 
-### 11.3 Amount Verification
+### INVOICE
 
-Receivers MUST verify the on-chain transfer amount matches the claimed amount.
+"You owe me this." The recipient decides whether to pay. If they do, they send a PAY.
 
-### 11.4 Thread Integrity
+```json
+{"v":"0.1.0",
+ "type":"invoice",
+ "note":"Auth hardening beyond original scope",
+ "amount":"1000000",
+ "token":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+ "chain":"solana",
+ "wallet":"6dL6n77jJFWq4bu3cQp57H8rMUPEXu7uYN1XApPxpUif"}
+```
 
-The transaction thread is the source of truth. Implementations SHOULD detect and reject messages with broken thread linkage.
+## Errors
 
-## 12. Interoperability
+### OOPS
 
-### 12.1 Minimum Conforming Implementation
+Any message can get an OOPS back. The `note` tells a human; the `error` object tells an agent.
 
-A conforming envelopay implementation MUST:
+```json
+{"v":"0.1.0",
+ "type":"oops",
+ "note":"Payment not found on-chain",
+ "error":{"code":"tx_not_found","tx":"0x3a7f..."}}
+```
 
-- Send and receive RFC 5322 email
-- Parse MIME messages
-- Support `REQUEST`, `DELIVER`, and `PAYMENT-REQUIRED`
-- Require `X-Envelopay-State` header
-- Parse REQUEST JSON with `amount`, `token`, `chain`, `proof`
-- Parse DELIVER JSON with `settlement`
-- Maintain thread linkage with `Message-ID`, `In-Reply-To`, `References`
-- Verify or record DKIM provenance status
-- Treat `proof` and `settlement` as opaque
+Common error codes:
 
-### 12.2 x402 Compatibility
+| Code | Meaning |
+|------|---------|
+| `tx_not_found` | Transaction doesn't exist on-chain |
+| `amount_mismatch` | On-chain amount doesn't match claimed amount |
+| `dkim_failed` | Sender can't be authenticated |
+| `unknown_type` | Subject looks like a protocol message but the type isn't recognized |
+| `insufficient_funds` | Can't fulfill a refund or payment |
+| `missing_wallet` | Invoice or refund request missing wallet address |
 
-Envelopay is compatible with the [x402 specification](https://www.x402.org/). The `X-Payment` and `X-Payment-Response` headers from the existing envelopay implementation are accepted as aliases for `X-Envelopay-State: REQUEST` and `X-Envelopay-State: DELIVER` respectively.
+### Protocol mismatch
 
-## 13. Application Concerns
+If the subject matches `^[A-Z]+(\s*\|.*)?$` but the keyword isn't one of the seven types, reply OOPS with `unknown_type`, the list of supported types, and a link to the spec.
 
-The following are explicitly out of scope for the protocol and left to application implementations:
+No message in the protocol requires a response. Silence is always valid. OOPS is a courtesy, not an obligation.
 
-- **Trust and discovery** — who to send to, reputation scoring, attestation graphs. Trust is a filter on the address book, not a protocol state. See [Proof of Trust](https://june.kim/proof-of-trust).
-- **Escrow, disputes, and arbitration** — applications MAY build escrow contracts, multi-step workflows, or dispute resolution on top of envelopay. These are application-layer protocols, not envelopay states.
-- **Refund policies** — a refund is a new REQUEST in the reverse direction, or an application-layer agreement. The protocol does not distinguish refunds from payments.
-- **Invoice IDs and order references** — put them in the `task` object.
-- **Milestone tracking and partial completion** — application sends multiple REQUESTs, one per milestone.
-- **Wallet-email identity binding** — see [ZK Email](https://docs.zk.email/), [EAS](https://attest.org/).
-- **Tax and compliance reporting** — application concern.
+## Flows
 
-The protocol carries proofs. Applications decide policy.
+**Pay:** `PAY` → done.
+
+**Order work:** `ORDER` → `FULFILL`. Two emails.
+
+**Invoice:** `INVOICE` → `PAY`. Two emails.
+
+**First contact:** `WHICH` → `METHODS` → `ORDER` → `FULFILL`. Four emails.
+
+**Repeat customer:** `ORDER` → `FULFILL`. Skip negotiation.
+
+## Verification
+
+Receivers must verify before doing work:
+
+1. Check DKIM signature on the incoming email
+2. Verify the proof on-chain (tx exists, amount matches, recipient matches)
+3. Check for replay (track processed Message-IDs)
+
+An ORDER without a matching FULFILL is a DKIM-signed, timestamped record of non-delivery. The protocol doesn't prevent fraud — it makes fraud auditable.
+
+## What the protocol doesn't do
+
+| Protocol | Application |
+|----------|-------------|
+| Message types and headers | Discovery and ranking |
+| Proof payload | Pricing and negotiation |
+| Email threading | Retries and timeouts |
+| DKIM verification | Reputation and trust |
+
+Discovery, trust, escrow, disputes, refunds — application concerns. The protocol carries proofs. Applications decide policy.
+
+## Spec
+
+- [Certified Mail](https://june.kim/certified-mail) — the semantics
+- [Sent](https://june.kim/sent) — the user story
