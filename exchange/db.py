@@ -138,9 +138,36 @@ def _append_event(event: dict) -> bool:
         return True
     except urllib.error.HTTPError as e:
         if e.code == 409:
-            # SHA conflict — someone else wrote concurrently
+            # SHA conflict — retry up to 3 times with fresh SHA
             _invalidate_cache()
-            return False
+            for _retry in range(3):
+                time.sleep(0.5)
+                lines, sha = _read_ledger()
+                new_content = "\n".join(json.dumps(l) for l in lines + [event]) + "\n"
+                encoded = base64.b64encode(new_content.encode("utf-8")).decode("utf-8")
+                body = {"message": f"ledger: {event.get('event', 'unknown')}", "content": encoded}
+                if sha:
+                    body["sha"] = sha
+                data = json.dumps(body).encode("utf-8")
+                retry_req = urllib.request.Request(
+                    _ledger_url(), data=data,
+                    headers={**_github_headers(), "Content-Type": "application/json"},
+                    method="PUT",
+                )
+                try:
+                    with urllib.request.urlopen(retry_req) as resp:
+                        resp_data = json.loads(resp.read())
+                    _cache_sha = resp_data["content"]["sha"]
+                    lines.append(event)
+                    _cache_lines = lines
+                    _cache_ts = time.time()
+                    return True
+                except urllib.error.HTTPError as retry_e:
+                    if retry_e.code == 409:
+                        _invalidate_cache()
+                        continue
+                    raise
+            return False  # exhausted retries
         raise
 
 
