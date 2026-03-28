@@ -92,38 +92,28 @@ def process_email(payload: dict) -> None:
                   {"code": "missing_wallet", "expected": '{"wallet": "your_address"}'})
         return
 
-    # Try to parse envelopay JSON from attachments or body
-    task, payment = _extract_task_and_payment(client, inbox_id, message)
+    # ORDER (or any unhandled message) — reply with INVOICE (worker sets the price)
+    text = message.get("text", "") or ""
+    body_json = _parse_json_from_text(text)
+    task_desc = body_json.get("task", {}).get("description", "") if isinstance(body_json.get("task"), dict) else body_json.get("note", subject)
+    order_id = body_json.get("id", "")
 
-    if not task:
-        # Plain-text email — treat the subject + body as the task
-        text = message.get("text", "") or ""
-        task = {"task": subject, "description": text.strip()}
-
-    # Verify payment proof
-    settlement = _verify_payment(payment) if payment else None
-
-    task_type = task.get("task", task.get("description", "unknown")) if isinstance(task, dict) else str(task)
-
-    if not settlement:
-        note = f"Payment required for: {task_type}"
-        body = {"v": "0.1.0", "type": "methods", "note": note,
-                "agent": INBOX,
-                "price": {"amount": "any", "currency": "SOL"},
-                "rails": [{"chain": "solana", "token": "SOL", "wallet": WALLET}]}
-        _reply(client, inbox_id, thread_id,
-               subject=f"METHODS | {note}",
-               text=json.dumps(body, indent=2),
-               headers={"X-Envelopay-Type": "METHODS"})
-        return
-
-    # Do the work: rickroll + refund
-    result = _do_work(task, settlement)
+    invoice = {
+        "v": "0.1.0",
+        "type": "invoice",
+        "note": f"Invoice for: {task_desc}",
+        "amount": "50000",
+        "token": "SOL",
+        "chain": "solana",
+        "wallet": WALLET,
+    }
+    if order_id:
+        invoice["order_ref"] = order_id
 
     _reply(client, inbox_id, thread_id,
-           subject=f"FULFILL | {result['note']}",
-           text=json.dumps(result, indent=2),
-           headers={"X-Envelopay-Type": "FULFILL"})
+           subject=f"INVOICE | {invoice['note']}",
+           text=json.dumps(invoice, indent=2),
+           headers={"X-Envelopay-Type": "INVOICE"})
 
 
 def _extract_task_and_payment(client: AgentMail, inbox_id: str, message: dict) -> tuple[dict, dict]:

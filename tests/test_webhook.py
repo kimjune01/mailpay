@@ -115,37 +115,32 @@ def test_invoice_success_returns_fulfill(mock_bal, mock_refund, patch_agentmail)
     assert body["v"] == "0.1.0"
 
 
-# --- ORDER (no payment) ---
+# --- ORDER (replies with INVOICE) ---
 
-def test_order_without_payment_returns_methods(patch_agentmail):
+def test_order_returns_invoice(patch_agentmail):
     wh.process_email(_payload("ORDER", text="do something"))
     replies = patch_agentmail._replies
     assert len(replies) == 1
-    assert replies[0]["headers"]["X-Envelopay-Type"] == "METHODS"
-    assert "METHODS |" in replies[0]["subject"]
+    assert replies[0]["headers"]["X-Envelopay-Type"] == "INVOICE"
+    assert "INVOICE |" in replies[0]["subject"]
     body = json.loads(replies[0]["text"])
-    assert body["type"] == "methods"
-    assert body["rails"][0]["wallet"] == wh.WALLET
+    assert body["v"] == "0.1.0"
+    assert body["type"] == "invoice"
+    assert body["wallet"] == wh.WALLET
+    assert "amount" in body
+    assert body["chain"] == "solana"
+    assert body["token"] == "SOL"
 
 
-# --- ORDER (with valid payment) ---
-
-@patch.object(wh, "_refund", return_value={"tx": "refund123", "amount": 45000, "to": "sender"})
-@patch.object(wh, "_verify_payment", return_value={
-    "tx": "valid_tx", "verified": True, "block": 999, "sender": "sender", "lamports": 50000,
-})
-def test_order_with_payment_returns_fulfill(mock_verify, mock_refund, patch_agentmail):
-    order = json.dumps({"task": "demo", "proof": {"tx": "valid_tx"}})
+def test_order_with_json_includes_order_ref(patch_agentmail):
+    order = json.dumps({"v": "0.1.0", "type": "order", "id": "ord_123",
+                        "task": {"description": "Review PR #417"}})
     wh.process_email(_payload("ORDER", text=order))
     replies = patch_agentmail._replies
     assert len(replies) == 1
-    assert replies[0]["headers"]["X-Envelopay-Type"] == "FULFILL"
-    assert "FULFILL |" in replies[0]["subject"]
     body = json.loads(replies[0]["text"])
-    assert body["v"] == "0.1.0"
-    assert body["type"] == "fulfill"
-    assert "deliverable" in body  # the rickroll
-    assert "refund" in body
+    assert body["type"] == "invoice"
+    assert body["order_ref"] == "ord_123"
 
 
 # --- Self-skip ---
@@ -220,13 +215,30 @@ def test_known_types_not_caught_by_mismatch(patch_agentmail):
     assert replies[0]["headers"]["X-Envelopay-Type"] == "METHODS"
 
 
+def test_offer_not_caught_by_mismatch(patch_agentmail):
+    """OFFER is a known type — should not trigger unknown_type OOPS."""
+    wh.process_email(_payload("OFFER | 1 SOL for 30 USDC"))
+    replies = patch_agentmail._replies
+    assert len(replies) == 1
+    # Falls through to invoice handler, not OOPS
+    assert replies[0]["headers"]["X-Envelopay-Type"] != "OOPS"
+
+
+def test_accept_not_caught_by_mismatch(patch_agentmail):
+    """ACCEPT is a known type — should not trigger unknown_type OOPS."""
+    wh.process_email(_payload("ACCEPT | 30 USDC sent"))
+    replies = patch_agentmail._replies
+    assert len(replies) == 1
+    assert replies[0]["headers"]["X-Envelopay-Type"] != "OOPS"
+
+
 def test_lowercase_subject_not_caught_by_mismatch(patch_agentmail):
-    """Lowercase subjects aren't protocol attempts — fall through to task handling."""
+    """Lowercase subjects aren't protocol attempts — fall through to invoice."""
     wh.process_email(_payload("hello there"))
     replies = patch_agentmail._replies
     assert len(replies) == 1
-    # Should hit the no-payment fallback, not OOPS
-    assert replies[0]["headers"]["X-Envelopay-Type"] == "METHODS"
+    # Should hit the invoice fallback, not OOPS
+    assert replies[0]["headers"]["X-Envelopay-Type"] == "INVOICE"
 
 
 # --- v and note on all responses ---
