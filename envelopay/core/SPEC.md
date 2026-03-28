@@ -1,7 +1,7 @@
 # core/ — Email Payment Protocol
 
 ## What it does
-Compose, send, receive, and verify paid emails over SMTP with x402 payment proofs on Solana.
+Compose, send, receive, and verify paid emails over SMTP with envelopay payment proofs on Solana.
 
 ## API
 
@@ -16,7 +16,7 @@ Compose, send, receive, and verify paid emails over SMTP with x402 payment proof
 - `verify_on_chain(payment, network, rpc_url) → bool` — requires tx_hash, checks Solana RPC for matching transfer (mint, sender, recipient, amount)
 - `compose(email) → MIMEMultipart` — build MIME with X-Payment, X-Payment-Required headers
 - `send(email, smtp_host, ...) → message_id` — SMTP send
-- `parse_email(raw_bytes) → PaymentEmail` — parse MIME, extract x402 headers, verify DKIM
+- `parse_email(raw_bytes) → PaymentEmail` — parse MIME, extract envelopay headers, verify DKIM
 - `receive(imap_host, ...) → Iterator[PaymentEmail]` — poll IMAP for unread
 
 ## Contracts

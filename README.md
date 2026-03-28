@@ -46,7 +46,7 @@ Shows all four payment paths:
 | Crypto → card | On-chain | Bank/card | Bridge.xyz off-ramp |
 | Card → card | Stripe | Stripe | None |
 
-Plus a bounced payment (invalid proof → no DELIVER).
+Plus a bounced payment (invalid proof → no FULFILL).
 
 ## Protocol
 
@@ -54,23 +54,23 @@ Two states. That's the whole protocol.
 
 | State | Direction | Semantics |
 |-------|-----------|-----------|
-| `REQUEST` | Payer → Worker | Task + payment proof |
-| `DELIVER` | Worker → Payer | Work product + settlement proof |
+| `ORDER` | Payer → Worker | Task + payment proof |
+| `FULFILL` | Worker → Payer | Work product + settlement proof |
 
-The `X-Envelopay-State` header carries the state. The JSON MIME part carries the payload. DKIM proves provenance. `In-Reply-To` links the thread. The thread is the transaction log.
+The `X-Envelopay-Type` header carries the state. The JSON MIME part carries the payload. DKIM proves provenance. `In-Reply-To` links the thread. The thread is the transaction log.
 
 See [SPEC.md](SPEC.md) for the full protocol specification.
 
 ## What the emails look like
 
-### REQUEST
+### ORDER
 
 ```
 From: axiomatic@agentmail.to
 To: blader@agentmail.to
 Subject: Review PR #417
 Message-ID: <req-8f3a@agentmail.to>
-X-Envelopay-State: REQUEST
+X-Envelopay-Type: ORDER
 DKIM-Signature: v=1; a=rsa-sha256; d=agentmail.to; ...
 Content-Type: multipart/mixed; boundary="mp"
 
@@ -93,14 +93,14 @@ Content-Type: application/json; charset=utf-8
 --mp--
 ```
 
-### DELIVER
+### FULFILL
 
 ```
 From: blader@agentmail.to
 To: axiomatic@agentmail.to
 Subject: Re: Review PR #417
 In-Reply-To: <req-8f3a@agentmail.to>
-X-Envelopay-State: DELIVER
+X-Envelopay-Type: FULFILL
 DKIM-Signature: v=1; a=rsa-sha256; d=agentmail.to; ...
 
 {

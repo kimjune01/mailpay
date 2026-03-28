@@ -7,7 +7,7 @@ Shows all four paths through envelopay:
 4. Card → card (ciphero pays blader via Stripe, no crypto)
 5. Bounce (bad proof, blader rejects)
 
-Each path: REQUEST email → verify proof → DELIVER email (or reject).
+Each path: ORDER email → verify proof → FULFILL email (or reject).
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ def mock_send_email(from_addr: str, to_addr: str, state: str, payload: dict) -> 
     """Simulate sending an envelopay email. Returns Message-ID."""
     msg_id = f"<{secrets.token_hex(4)}@agentmail.to>"
     print(f"  📧 {from_addr} → {to_addr}")
-    print(f"     X-Envelopay-State: {state}")
+    print(f"     X-Envelopay-Type: {state}")
     print(f"     Message-ID: {msg_id}")
     print(f"     {json.dumps(payload, indent=6)}")
     return msg_id
@@ -135,16 +135,16 @@ def demo_crypto_to_crypto():
     # Pay
     proof = mock_solana_transfer(AX_WALLET, BL_WALLET, 500_000)
 
-    # REQUEST
-    req_id = mock_send_email(AXIOMATIC, BLADER, "REQUEST", {
+    # ORDER
+    req_id = mock_send_email(AXIOMATIC, BLADER, "ORDER", {
         "task": {"description": "Review PR #417"},
         "amount": "500000", "token": "USDC", "chain": "solana",
         "proof": proof,
     })
 
-    # Verify + DELIVER
+    # Verify + FULFILL
     assert mock_verify_solana(proof["tx"], 500_000)
-    mock_send_email(BLADER, AXIOMATIC, "DELIVER", {
+    mock_send_email(BLADER, AXIOMATIC, "FULFILL", {
         "result": {"summary": "Approved with 2 comments"},
         "settlement": {"tx": proof["tx"], "verified": True, "block": proof["block"]},
     })
@@ -157,17 +157,17 @@ def demo_card_to_crypto():
     # On-ramp
     ramp = mock_bridge_on_ramp(0.50, BL_WALLET)
 
-    # REQUEST
-    mock_send_email(CIPHERO, BLADER, "REQUEST", {
+    # ORDER
+    mock_send_email(CIPHERO, BLADER, "ORDER", {
         "task": {"description": "Translate README to Japanese"},
         "amount": ramp["amount"], "token": "USDC", "chain": "solana",
         "proof": ramp,
         "fallback": "https://pay.stripe.com/c/cs_live_abc123",
     })
 
-    # Verify + DELIVER
+    # Verify + FULFILL
     assert mock_verify_solana(ramp["tx"], int(ramp["amount"]))
-    mock_send_email(BLADER, CIPHERO, "DELIVER", {
+    mock_send_email(BLADER, CIPHERO, "FULFILL", {
         "result": {"summary": "Translation complete", "artifact": "README.ja.md"},
         "settlement": {"tx": ramp["tx"], "verified": True, "block": 285714500},
     })
@@ -180,8 +180,8 @@ def demo_crypto_to_card():
     # Pay on-chain
     proof = mock_solana_transfer(AX_WALLET, "BRIDGE_ESCROW_ADDR", 500_000)
 
-    # REQUEST
-    mock_send_email(AXIOMATIC, CIPHERO, "REQUEST", {
+    # ORDER
+    mock_send_email(AXIOMATIC, CIPHERO, "ORDER", {
         "task": {"description": "Proofread blog post"},
         "amount": "500000", "token": "USDC", "chain": "solana",
         "proof": proof,
@@ -193,7 +193,7 @@ def demo_crypto_to_card():
     # Ciphero does the work, then off-ramps
     offramp = mock_bridge_off_ramp(500_000, CI_BANK)
 
-    mock_send_email(CIPHERO, AXIOMATIC, "DELIVER", {
+    mock_send_email(CIPHERO, AXIOMATIC, "FULFILL", {
         "result": {"summary": "Proofread complete, 3 typos fixed"},
         "settlement": {"tx": proof["tx"], "verified": True, "block": proof["block"], "offramp": offramp},
     })
@@ -206,28 +206,66 @@ def demo_card_to_card():
     # Charge
     charge = mock_stripe_charge(0.50)
 
-    # REQUEST
-    mock_send_email(CIPHERO, BLADER, "REQUEST", {
+    # ORDER
+    mock_send_email(CIPHERO, BLADER, "ORDER", {
         "task": {"description": "Fix CSS bug in footer"},
         "amount": "0.50", "token": "USD", "chain": "stripe",
         "proof": charge,
         "fallback": "https://cash.app/$ciphero",
     })
 
-    # Verify + DELIVER
+    # Verify + FULFILL
     assert mock_verify_stripe(charge["charge_id"])
-    mock_send_email(BLADER, CIPHERO, "DELIVER", {
+    mock_send_email(BLADER, CIPHERO, "FULFILL", {
         "result": {"summary": "Fixed. padding-bottom was 0, now 16px."},
         "settlement": charge,
     })
     print("\n  ✅ Done. No crypto. No wallet. Same protocol.\n")
 
 
-def demo_bounce():
-    _banner("5. BOUNCE: bad proof, blader rejects")
+def demo_invoice():
+    _banner("5. INVOICE: ciphero asks blader for a price first")
 
-    # REQUEST with bogus tx
-    mock_send_email(AXIOMATIC, BLADER, "REQUEST", {
+    # Ciphero sends a task without payment
+    _step("Ciphero sends task with no payment attached…")
+    mock_send_email(CIPHERO, BLADER, "ORDER", {
+        "task": {"description": "Audit Solana program for vulnerabilities"},
+    })
+
+    # Blader replies with PAYMENT-REQUIRED
+    _step("Blader doesn't work for free…")
+    mock_send_email(BLADER, CIPHERO, "PAYMENT-REQUIRED", {
+        "amount": "2000000",
+        "token": "USDC",
+        "chain": "solana",
+        "fallback": "https://pay.stripe.com/c/cs_live_audit789",
+    })
+
+    # Ciphero pays and resends
+    proof = mock_solana_transfer(
+        "CIPHEROxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        BL_WALLET, 2_000_000,
+    )
+    mock_send_email(CIPHERO, BLADER, "ORDER", {
+        "task": {"description": "Audit Solana program for vulnerabilities"},
+        "amount": "2000000", "token": "USDC", "chain": "solana",
+        "proof": proof,
+    })
+
+    # Verify + FULFILL
+    assert mock_verify_solana(proof["tx"], 2_000_000)
+    mock_send_email(BLADER, CIPHERO, "FULFILL", {
+        "result": {"summary": "No critical vulnerabilities. 2 low-severity findings."},
+        "settlement": {"tx": proof["tx"], "verified": True, "block": proof["block"]},
+    })
+    print("\n  ✅ Done. Four emails: ask, quote, pay, deliver.\n")
+
+
+def demo_bounce():
+    _banner("6. BOUNCE: bad proof, blader rejects")
+
+    # ORDER with bogus tx
+    mock_send_email(AXIOMATIC, BLADER, "ORDER", {
         "task": {"description": "Review PR #418"},
         "amount": "500000", "token": "USDC", "chain": "solana",
         "proof": {"tx": "BOGUS"},
@@ -237,7 +275,7 @@ def demo_bounce():
     verified = mock_verify_solana("BOGUS", 500_000)
     assert not verified
 
-    print("\n  ❌ Bounce. Proof invalid. No DELIVER sent.")
+    print("\n  ❌ Bounce. Proof invalid. No FULFILL sent.")
     print("     Axiomatic's email sits unanswered.")
     print("     Trust topology unchanged. No refund needed.\n")
 
@@ -247,9 +285,10 @@ if __name__ == "__main__":
     demo_card_to_crypto()
     demo_crypto_to_card()
     demo_card_to_card()
+    demo_invoice()
     demo_bounce()
 
     print("=" * 60)
-    print("  Five scenarios. One protocol. Two emails each.")
+    print("  Six scenarios. One protocol.")
     print("  Friction is at the rail, not the envelope.")
     print("=" * 60)
