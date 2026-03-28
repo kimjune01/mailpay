@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import urllib.request
 
 from agentmail import AgentMail
@@ -27,6 +28,9 @@ from agentmail import AgentMail
 INBOX = "axiomatic@agentmail.to"
 WALLET = "BhNb354sCVmuUSm1DvYANtEJwCtDMs4ARHo3FchPBYtY"
 MAINNET_RPC = "https://api.mainnet-beta.solana.com"
+MAX_LAMPORTS = 100_000  # 0.0001 SOL — about one penny
+KNOWN_TYPES = {"WHICH", "METHODS", "PAY", "ORDER", "FULFILL", "INVOICE", "OFFER", "ACCEPT", "OOPS"}
+PROTOCOL_RE = re.compile(r"^([A-Z]+)(\s*\|.*)?$")
 
 
 def process_email(payload: dict) -> None:
@@ -38,9 +42,28 @@ def process_email(payload: dict) -> None:
     subject = message.get("subject", "")
     inbox_id = message.get("inbox_id", INBOX)
     thread_id = message.get("thread_id", "")
+    msg_id = message.get("message_id", "")
+
+    # Verify DKIM on the raw email
+    dkim_ok = _verify_dkim_via_raw(client, inbox_id, msg_id)
+    if not dkim_ok:
+        print(f"DKIM verification failed for {msg_id} from {from_addr}")
+        # Continue processing but log the failure
 
     # Skip our own sent messages
     if INBOX in from_addr:
+        return
+
+    # Protocol mismatch — subject looks like a type keyword but isn't one we know
+    match = PROTOCOL_RE.match(subject.strip())
+    if match and match.group(1) not in KNOWN_TYPES:
+        types = " | ".join(sorted(KNOWN_TYPES))
+        _oops(client, inbox_id, thread_id,
+              f"Unknown type: {match.group(1)}",
+              {"code": "unknown_type",
+               "sent": match.group(1),
+               "supported": sorted(KNOWN_TYPES),
+               "spec": "https://june.kim/certified-mail"})
         return
 
     # WHICH — reply with METHODS
@@ -48,9 +71,7 @@ def process_email(payload: dict) -> None:
         terms = {
             "v": "0.1.0",
             "type": "methods",
-            "note": "Send any amount of SOL, I'll do the work and refund you",
-            "agent": INBOX,
-            "price": {"amount": "any", "currency": "SOL"},
+            "note": "Solana, SOL",
             "rails": [
                 {"chain": "solana", "token": "SOL", "wallet": WALLET},
             ],
@@ -67,8 +88,8 @@ def process_email(payload: dict) -> None:
         invoice = _parse_json_from_text(message.get("text", "") or "")
         wallet = invoice.get("wallet", "") if invoice else ""
         if wallet and len(wallet) >= 32 and len(wallet) <= 44:
-            # Send whatever we can
-            refund = _refund(wallet, _get_balance())
+            # Send whatever we can, up to the cap
+            refund = _refund(wallet, min(_get_balance(), MAX_LAMPORTS))
             if refund:
                 result = {
                     "v": "0.1.0",
@@ -169,6 +190,25 @@ def _parse_json_from_text(text: str) -> dict:
         return json.loads(text.strip())
     except (json.JSONDecodeError, ValueError):
         return {}
+
+
+def _verify_dkim_via_raw(client: AgentMail, inbox_id: str, message_id: str) -> bool:
+    """Fetch raw .eml from AgentMail and verify DKIM signature."""
+    if not message_id:
+        return False
+    try:
+        import dkim
+        raw_resp = client.inboxes.messages.get_raw(inbox_id=inbox_id, message_id=message_id)
+        req = urllib.request.Request(raw_resp.download_url)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw_bytes = resp.read()
+        return dkim.verify(raw_bytes)
+    except ImportError:
+        print("dkimpy not installed — skipping DKIM verification")
+        return False
+    except Exception as e:
+        print(f"DKIM verification error: {e}")
+        return False
 
 
 def _get_balance() -> int:
@@ -299,8 +339,8 @@ def _do_work(task: dict, settlement: dict) -> dict:
         "settlement": settlement,
     }
 
-    # Refund the sender (minus tx fee)
-    refund = _refund(settlement.get("sender", ""), settlement.get("lamports", 0))
+    # Refund the sender (minus tx fee), capped
+    refund = _refund(settlement.get("sender", ""), min(settlement.get("lamports", 0), MAX_LAMPORTS))
     if refund:
         result["refund"] = refund
 

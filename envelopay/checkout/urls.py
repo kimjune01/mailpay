@@ -19,7 +19,7 @@ def mailto_url(
 
     Scanning a QR code of this URL opens the user's mail client
     with recipient, subject, and body pre-filled. The sending agent
-    signs the x402 header before dispatch.
+    signs the envelopay header before dispatch.
 
     Returns a RFC 6068 mailto: URL.
     """

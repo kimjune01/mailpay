@@ -9,7 +9,7 @@ from typing import Any
 
 @dataclass
 class Payment:
-    """An x402 payment proof attached to an email."""
+    """An envelopay payment proof attached to an email."""
     signature: str
     amount: int
     token: str
@@ -52,7 +52,7 @@ class Payment:
 
 @dataclass
 class PaymentRequired:
-    """An x402 payment-required response (the 402 equivalent)."""
+    """An envelopay payment-required response (the 402 equivalent)."""
     scheme: str = "exact"
     network: str = "solana"
     max_amount: int = 0
@@ -85,7 +85,7 @@ class PaymentRequired:
 
 @dataclass
 class PaymentEmail:
-    """An email with an x402 payment header."""
+    """An email with envelopay payment headers."""
     from_addr: str
     to_addr: str
     task: dict[str, Any] = field(default_factory=dict)

@@ -1,4 +1,4 @@
-"""x402 payment construction and on-chain verification via Solana."""
+"""Envelopay payment construction and on-chain verification via Solana."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def sign_payment(
     private_key: str,
     recipient: str = "",
 ) -> Payment:
-    """Create a signed x402 payment proof using ed25519.
+    """Create a signed envelopay payment proof using ed25519.
 
     The sender signs a canonical message containing amount, token, nonce,
     and recipient wallet. The receiver verifies the signature against the
@@ -182,6 +182,6 @@ def make_payment_link(
     description: str = "",
     provider: str = "stripe",
 ) -> str:
-    """Generate a fallback payment link for agents without x402 support."""
+    """Generate a fallback payment link for agents without envelopay support."""
     amount_usd = amount / 1_000_000  # USDC has 6 decimals
     return f"https://checkout.stripe.com/pay?amount={amount_usd}&description={description}"

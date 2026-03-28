@@ -1,4 +1,4 @@
-"""Poll IMAP for paid emails, parse x402 headers, verify DKIM."""
+"""Poll IMAP for paid emails, parse envelopay headers, verify DKIM."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from envelopay.core.payment import verify_on_chain
 
 
 def parse_email(raw: bytes) -> PaymentEmail:
-    """Parse a raw email into a PaymentEmail with x402 headers."""
+    """Parse a raw email into a PaymentEmail with envelopay headers."""
     msg = email.message_from_bytes(raw)
 
     pe = PaymentEmail(
@@ -96,7 +96,7 @@ def _verify_dkim(raw: bytes) -> bool:
 
 
 def verify_payment(payment: Payment | None, network: str = "solana") -> bool:
-    """Verify an x402 payment proof against the blockchain."""
+    """Verify an envelopay payment proof against the blockchain."""
     if payment is None:
         return False
     return verify_on_chain(payment, network=network)

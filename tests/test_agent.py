@@ -106,7 +106,7 @@ def test_process_without_payment_returns_402():
     assert reply.payment_required.max_amount == 50000
 
 
-def test_process_unknown_task():
+def test_process_unknown_task_no_default():
     agent = _make_agent()
     email = PaymentEmail(
         from_addr="alice@alice.dev",
@@ -116,6 +116,35 @@ def test_process_unknown_task():
 
     reply = agent.process(email)
     assert reply is None
+
+
+def test_process_unknown_task_with_default():
+    agent = _make_agent()
+
+    @agent.default
+    def fallback(task):
+        return {"handled": task.get("task", "")}
+
+    kp = Keypair()
+    payment = sign_payment(
+        amount=50000,
+        token=USDC_MINT,
+        network="solana",
+        private_key=str(kp),
+        recipient="bot@test.com",
+    )
+    email = PaymentEmail(
+        from_addr="alice@alice.dev",
+        to_addr="bot@test.com",
+        task={"task": "anything"},
+        subject="Do anything",
+        message_id="<default@alice.dev>",
+        payment=payment,
+    )
+
+    reply = agent.process(email)
+    assert reply is not None
+    assert reply.task == {"handled": "anything"}
 
 
 def test_process_free_agent():

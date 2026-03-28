@@ -126,6 +126,7 @@ class Agent:
         self.poll_interval = poll_interval
         self.handler_timeout = handler_timeout
         self._handlers: dict[str, TaskHandler] = {}
+        self._default_handler: TaskHandler | None = None
 
         # Persistent nonce store
         if nonce_file:
@@ -148,12 +149,23 @@ class Agent:
             return fn
         return decorator
 
+    def default(self, fn: TaskHandler) -> TaskHandler:
+        """Register a default handler for any unregistered task type.
+
+        @agent.default
+        def fallback(task):
+            return {"result": "done"}
+        """
+        self._default_handler = fn
+        return fn
+
     def process(self, email: PaymentEmail) -> PaymentEmail | None:
         """Process a single incoming email. Returns a reply email or None."""
         task_type = email.task.get("task", "")
 
-        # Unknown task type
-        if task_type not in self._handlers:
+        # Resolve handler: named handler first, then default, then drop
+        handler = self._handlers.get(task_type) or self._default_handler
+        if handler is None:
             return None
 
         # No payment and we require one
@@ -185,7 +197,6 @@ class Agent:
                 )
 
         # Do the work (with timeout)
-        handler = self._handlers[task_type]
         result = _run_with_timeout(handler, email.task, self.handler_timeout)
 
         if result is None:

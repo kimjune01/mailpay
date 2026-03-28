@@ -14,7 +14,7 @@ from envelopay.core.payment import sign_payment
 
 
 def compose(email: PaymentEmail) -> MIMEMultipart:
-    """Build a MIME message with x402 payment headers."""
+    """Build a MIME message with envelopay payment headers."""
     msg = MIMEMultipart("mixed")
     msg["From"] = email.from_addr
     msg["To"] = email.to_addr
