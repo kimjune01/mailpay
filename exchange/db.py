@@ -3,11 +3,30 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import time
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
+
+
+def _protect_email(email: str) -> str:
+    """XOR-encrypt email with HMAC key. Reversible with the key, opaque without it."""
+    from exchange.config import LEDGER_HMAC_KEY
+    key = (LEDGER_HMAC_KEY or "default").encode()
+    email_bytes = email.lower().encode()
+    encrypted = bytes(b ^ key[i % len(key)] for i, b in enumerate(email_bytes))
+    return base64.b64encode(encrypted).decode()
+
+
+def _unprotect_email(token: str) -> str:
+    """Reverse XOR-encryption to recover the email."""
+    from exchange.config import LEDGER_HMAC_KEY
+    key = (LEDGER_HMAC_KEY or "default").encode()
+    encrypted = base64.b64decode(token)
+    decrypted = bytes(b ^ key[i % len(key)] for i, b in enumerate(encrypted))
+    return decrypted.decode()
 from typing import Optional
 
 from exchange.config import LEDGER_GITHUB_TOKEN, LEDGER_REPO, LEDGER_PREFIX
@@ -157,7 +176,7 @@ def _replay_offers(lines: list[dict]) -> dict[str, dict]:
                 "id": _ofr_to_int(oid),
                 "created_at": ev.get("ts", ""),
                 "message_id": ev.get("message_id"),
-                "email_from": ev.get("from", ""),
+                "email_from": _unprotect_email(ev["from"]) if ev.get("from") else "",
                 "cashapp_or_venmo": ev.get("rail"),
                 "fiat_amount_cents": ev.get("amount_cents", 0),
                 "sol_amount_lamports": ev.get("sol_lamports", 0),
@@ -233,7 +252,7 @@ def create_transaction(
         "ts": _now_iso(),
         "event": "offer",
         "id": ofr_id,
-        "from": email_from,
+        "from": _protect_email(email_from),
         "amount_cents": fiat_amount_cents,
         "rail": cashapp_or_venmo,
         "wallet": wallet_address,
@@ -322,7 +341,7 @@ def ban_email(db_path: str, email: str, reason: str, amount_owed_cents: int = 0)
     event = {
         "ts": _now_iso(),
         "event": "banned",
-        "email": email_lower,
+        "email": _protect_email(email_lower),
         "reason": reason,
         "owed_cents": amount_owed_cents,
     }
@@ -332,14 +351,14 @@ def ban_email(db_path: str, email: str, reason: str, amount_owed_cents: int = 0)
 def is_banned(db_path: str, email: str) -> bool:
     """Check if an email is banned."""
     lines, _ = _read_ledger()
-    return _is_banned_from_lines(lines, email.lower())
+    return _is_banned_from_lines(lines, _protect_email(email))
 
 
-def _is_banned_from_lines(lines: list[dict], email_lower: str) -> bool:
+def _is_banned_from_lines(lines: list[dict], email_hash: str) -> bool:
     """Replay ban/unban events to determine current ban status."""
     banned = False
     for ev in lines:
-        if ev.get("email", "").lower() == email_lower:
+        if ev.get("email", "") == email_hash:
             if ev.get("event") == "banned":
                 banned = True
             elif ev.get("event") == "unbanned":
@@ -349,15 +368,15 @@ def _is_banned_from_lines(lines: list[dict], email_lower: str) -> bool:
 
 def get_ban(db_path: str, email: str) -> Optional[dict]:
     """Get the ban details for an email, or None if not banned."""
-    email_lower = email.lower()
+    email_hash = _protect_email(email)
     lines, _ = _read_ledger()
 
     ban_info = None
     for ev in lines:
-        if ev.get("email", "").lower() == email_lower:
+        if ev.get("email", "") == email_hash:
             if ev.get("event") == "banned":
                 ban_info = {
-                    "email": email_lower,
+                    "email": email_hash,
                     "reason": ev.get("reason", ""),
                     "banned_at": ev.get("ts", ""),
                     "amount_owed_cents": ev.get("owed_cents", 0),
@@ -369,13 +388,13 @@ def get_ban(db_path: str, email: str) -> Optional[dict]:
 
 def unban_email(db_path: str, email: str) -> bool:
     """Lift a ban. Returns True if was banned."""
-    email_lower = email.lower()
+    email_hash = _protect_email(email)
     lines, _ = _read_ledger()
 
-    if not _is_banned_from_lines(lines, email_lower):
+    if not _is_banned_from_lines(lines, email_hash):
         return False
 
-    event = {"ts": _now_iso(), "event": "unbanned", "email": email_lower}
+    event = {"ts": _now_iso(), "event": "unbanned", "email": email_hash}
     return _append_event(event)
 
 

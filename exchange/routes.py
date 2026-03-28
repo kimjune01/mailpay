@@ -18,6 +18,7 @@ from exchange.config import (
     VENMO_HANDLE,
 )
 from exchange.db import (
+    _protect_email,
     approve_transaction,
     ban_email,
     claim_transaction,
@@ -243,7 +244,7 @@ def handle_pay(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
 
     _append_event({
         "event": "donation",
-        "from": from_addr,
+        "from": _protect_email(from_addr),
         "amount": amount,
         "token": body.get("token", "SOL"),
         "chain": body.get("chain", "solana"),
