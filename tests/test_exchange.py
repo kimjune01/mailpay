@@ -129,11 +129,8 @@ def test_which_returns_methods(patch_agentmail):
 
 def test_offer_valid_creates_pending(patch_agentmail):
     xh.process_email(_payload("OFFER | $2 for SOL", text=_valid_offer(200)), db_path=DB)
-    replies = patch_agentmail._replies
-    assert len(replies) == 1
-    body = _extract_json(replies[0]["text"])
-    assert body["error"]["code"] == "pending_verification"
-    assert body["error"]["tx_id"] == 1
+    # No reply — silence until ACCEPT
+    assert len(patch_agentmail._replies) == 0
     # Check DB
     pending = xdb.get_pending(DB)
     assert len(pending) == 1
@@ -326,11 +323,10 @@ def test_duplicate_offer_same_message_id_skipped(patch_agentmail):
     p2 = _payload("OFFER | $2", text=offer_text, message_id="msg-abc-123")
 
     xh.process_email(p1, db_path=DB)
-    assert len(patch_agentmail._replies) == 1  # first gets a reply
+    assert len(patch_agentmail._replies) == 0  # silence — pending
 
-    patch_agentmail._replies.clear()
     xh.process_email(p2, db_path=DB)
-    assert len(patch_agentmail._replies) == 0  # duplicate: no reply
+    assert len(patch_agentmail._replies) == 0  # duplicate: also silence
 
     # Only one row in DB
     pending = xdb.get_pending(DB)
@@ -447,10 +443,10 @@ def test_multiline_json_parsing(patch_agentmail):
         "wallet": "6dL6n77jJFWq4bu3cQp57H8rMUPEXu7uYN1XApPxpUif",
     }, indent=2)  # Multi-line!
     xh.process_email(_payload("OFFER | $2", text=offer), db_path=DB)
-    replies = patch_agentmail._replies
-    assert len(replies) == 1
-    body = _extract_json(replies[0]["text"])
-    assert body["error"]["code"] == "pending_verification"
+    # No reply — silence until ACCEPT
+    assert len(patch_agentmail._replies) == 0
+    # But the offer should be in the DB
+    assert len(xdb.get_pending(DB)) == 1
 
 
 # ===================================================================
@@ -501,7 +497,8 @@ def test_cashapp_notification_auto_approves(patch_agentmail):
     tx_id = _create_pending_offer(amount_cents=200, message_id="offer-msg-1")
 
     with patch.object(xh, "send_sol", return_value="fake_sol_tx_abc") as mock_sol, \
-         patch.object(xh, "send_accept") as mock_accept:
+         patch.object(xh, "send_accept") as mock_accept, \
+         patch.object(xh, "_get_last_message_info", return_value=("msg-1", "buyer@test.com")):
         xh.process_email(_cashapp_notification("$2.00"), db_path=DB)
 
     mock_sol.assert_called_once_with(1_000_000, "6dL6n77jJFWq4bu3cQp57H8rMUPEXu7uYN1XApPxpUif")
@@ -592,7 +589,8 @@ def test_payment_notification_fifo_oldest_matched(patch_agentmail):
                                      message_id="offer-new")
 
     with patch.object(xh, "send_sol", return_value="fake_sol_fifo") as mock_sol, \
-         patch.object(xh, "send_accept") as mock_accept:
+         patch.object(xh, "send_accept") as mock_accept, \
+         patch.object(xh, "_get_last_message_info", return_value=("msg-1", "buyer@test.com")):
         xh.process_email(_cashapp_notification("$2.00"), db_path=DB)
 
     # Should match the oldest (tx_id_1)

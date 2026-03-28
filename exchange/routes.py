@@ -18,7 +18,7 @@ from exchange.config import (
     VENMO_HANDLE,
 )
 from exchange.db import (
-    _protect_email,
+    _hash_pii,
     approve_transaction,
     ban_email,
     claim_transaction,
@@ -189,18 +189,8 @@ def handle_offer(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
     if tx_id is None:
         return
 
-    ack = {
-        "v": "0.1.0",
-        "type": "oops",
-        "note": f"Payment received, verifying. You'll get ${amount_cents/100:.2f} worth of SOL "
-                f"({sol_lamports} lamports) to {wallet} once confirmed. Ref #{tx_id}.",
-        "error": {"code": "pending_verification", "tx_id": tx_id},
-    }
-    _reply(client, inbox_id, reply_to_msg_id,
-           subject=f"OOPS | Payment received, verifying (ref #{tx_id})",
-           text=json.dumps(ack, indent=2),
-           headers={"X-Envelopay-Type": "OOPS"},
-           to=to)
+    # Silence. The user gets ACCEPT when payment matches, or nothing.
+    # Pending isn't an error — don't OOPS it.
 
 
 def handle_pay(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
@@ -244,7 +234,7 @@ def handle_pay(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
 
     _append_event({
         "event": "donation",
-        "from": _protect_email(from_addr),
+        "from": _hash_pii(from_addr),
         "amount": amount,
         "token": body.get("token", "SOL"),
         "chain": body.get("chain", "solana"),
@@ -306,13 +296,15 @@ def handle_payment_notification(client: AgentMail, inbox_id: str, from_addr: str
     sol_tx_hash = _h.send_sol(matched_tx["sol_amount_lamports"], matched_tx["wallet_address"])
     approve_transaction(db_path, matched_tx["id"], sol_tx_hash)
 
+    # Look up the original sender from the thread (ledger only has hash)
+    _, original_sender = _h._get_last_message_info(client, matched_tx["thread_id"])
     _h.send_accept(
         thread_id=matched_tx["thread_id"],
         offer_ref=str(matched_tx["id"]),
         sol_tx=sol_tx_hash,
         lamports=matched_tx["sol_amount_lamports"],
         wallet=matched_tx["wallet_address"],
-        to_addr=matched_tx["email_from"],
+        to_addr=original_sender,
     )
     logger.info(
         "Auto-approved tx #%d: $%.2f -> %d lamports to %s (sol_tx: %s)",
