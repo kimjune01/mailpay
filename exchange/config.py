@@ -17,4 +17,8 @@ SPREAD = 0.30           # 30%
 
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 
+LEDGER_GITHUB_TOKEN = os.environ.get("LEDGER_GITHUB_TOKEN", "")
+LEDGER_REPO = os.environ.get("LEDGER_REPO", "kimjune01/envelopay-ledger")
+LEDGER_PREFIX = os.environ.get("LEDGER_PREFIX", "axiomatic")
+
 KNOWN_TYPES = {"WHICH", "METHODS", "PAY", "ORDER", "FULFILL", "INVOICE", "OFFER", "ACCEPT", "OOPS"}

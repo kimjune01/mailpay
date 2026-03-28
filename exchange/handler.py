@@ -36,7 +36,6 @@ from exchange.db import (
     get_ban,
     get_most_recent_approved,
     get_pending,
-    init_db,
     is_banned,
     unban_email,
 )
@@ -52,11 +51,8 @@ _BASE58_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]+$")
 # Extract sender name from CashApp/Venmo notification ("X paid you $Y")
 _SENDER_RE = re.compile(r"(.+?)\s+(?:paid|sent)\s+you\s+\$", re.IGNORECASE)
 
-# DB path — use /tmp on Lambda (read-only filesystem), local dir otherwise
-if os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
-    DB_PATH = "/tmp/exchange.db"
-else:
-    DB_PATH = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "exchange.db"))
+# db_path kept for API compat but unused (ledger is on GitHub now)
+DB_PATH = "unused"
 
 
 def _check_webhook_secret(headers: dict) -> bool:
@@ -73,7 +69,6 @@ def _check_webhook_secret(headers: dict) -> bool:
 def process_email(payload: dict, db_path: str = DB_PATH) -> None:
     """Process an incoming email from the webhook."""
     client = AgentMail(api_key=AGENTMAIL_API_KEY)
-    init_db(db_path)
 
     message = payload.get("message", {})
     from_addr = message.get("from_", "")

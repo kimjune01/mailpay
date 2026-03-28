@@ -13,21 +13,19 @@ from exchange.db import (
     get_pending,
     get_stats,
     get_transaction,
-    init_db,
     reject_transaction,
     unban_email,
 )
 from exchange.handler import send_accept, send_reject
 from exchange.settle import send_sol
 
-# Absolute DB path — same as handler.py
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "exchange.db")
-DB_PATH = os.path.normpath(DB_PATH)
+# db_path kept for API compat but unused (ledger is on GitHub now)
+DB_PATH = "unused"
 
 
 def cmd_pending(args: argparse.Namespace) -> None:
     """List pending transactions."""
-    init_db(DB_PATH)
+
     rows = get_pending(DB_PATH)
     if not rows:
         print("No pending transactions.")
@@ -45,7 +43,7 @@ def cmd_pending(args: argparse.Namespace) -> None:
 
 def cmd_approve(args: argparse.Namespace) -> None:
     """Approve a pending transaction: send SOL, reply ACCEPT."""
-    init_db(DB_PATH)
+
     tx = get_transaction(DB_PATH, args.id)
     if not tx:
         print(f"Transaction #{args.id} not found.")
@@ -88,7 +86,7 @@ def cmd_approve(args: argparse.Namespace) -> None:
 
 def cmd_reject(args: argparse.Namespace) -> None:
     """Reject a pending transaction: reply OOPS."""
-    init_db(DB_PATH)
+
     tx = get_transaction(DB_PATH, args.id)
     if not tx:
         print(f"Transaction #{args.id} not found.")
@@ -104,7 +102,7 @@ def cmd_reject(args: argparse.Namespace) -> None:
 
 def cmd_stats(args: argparse.Namespace) -> None:
     """Show exchange stats."""
-    init_db(DB_PATH)
+
     s = get_stats(DB_PATH)
     print(f"Approved transactions: {s['count']}")
     print(f"Total volume: ${s['total_cents']/100:.2f}")
@@ -118,7 +116,7 @@ def cmd_stats(args: argparse.Namespace) -> None:
 
 def cmd_unban(args: argparse.Namespace) -> None:
     """Lift a ban on an email address."""
-    init_db(DB_PATH)
+
     if unban_email(DB_PATH, args.email):
         print(f"Unbanned {args.email}.")
     else:
