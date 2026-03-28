@@ -61,3 +61,12 @@ def send_sol(lamports: int, destination: str) -> str:
         raise RuntimeError(f"Transaction failed: {result['error']}")
 
     return result["result"]
+
+
+def get_balance() -> int:
+    """Get hot wallet balance in lamports."""
+    wallet = os.environ.get("SOL_WALLET", "")
+    if not wallet:
+        return 0
+    result = _rpc("getBalance", [wallet])
+    return result.get("result", {}).get("value", 0)

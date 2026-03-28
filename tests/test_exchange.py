@@ -144,15 +144,12 @@ def test_offer_valid_creates_pending(patch_agentmail):
 
 # --- OFFER too high ---
 
-def test_offer_amount_too_high(patch_agentmail):
+def test_offer_amount_too_high_capped(patch_agentmail):
+    """OFFER over $5 gets capped to $5, not rejected."""
     xh.process_email(_payload("OFFER | $10", text=_valid_offer(1000)), db_path=DB)
-    replies = patch_agentmail._replies
-    assert len(replies) == 1
-    assert replies[0]["headers"]["X-Envelopay-Type"] == "OOPS"
-    body = _extract_json(replies[0]["text"])
-    assert body["error"]["code"] == "amount_too_high"
-    # No DB entry
-    assert len(xdb.get_pending(DB)) == 0
+    pending = xdb.get_pending(DB)
+    assert len(pending) == 1
+    assert pending[0]["fiat_amount_cents"] == 500
 
 
 # --- OFFER too low ---
@@ -560,21 +557,31 @@ def test_payment_notification_no_match_ignored(patch_agentmail):
     assert len(patch_agentmail._replies) == 0
 
 
-def test_payment_notification_wrong_amount_no_match(patch_agentmail):
-    """Payment notification with wrong amount doesn't match any pending OFFER."""
-    _create_pending_offer(amount_cents=200, message_id="offer-msg-3")
+def test_payment_notification_underpayment_no_match(patch_agentmail):
+    """Payment less than the pending OFFER doesn't match."""
+    _create_pending_offer(amount_cents=500, message_id="offer-msg-3")
 
     with patch.object(xh, "send_sol") as mock_sol, \
          patch.object(xh, "send_accept") as mock_accept:
-        # Notification is $3.00 but pending OFFER is $2.00
+        # Notification is $3.00 but pending OFFER is $5.00
         xh.process_email(_cashapp_notification("$3.00"), db_path=DB)
 
     mock_sol.assert_not_called()
     mock_accept.assert_not_called()
-    # Pending OFFER should still be pending
     pending = xdb.get_pending(DB)
     assert len(pending) == 1
     assert pending[0]["status"] == "pending"
+
+
+def test_payment_notification_overpayment_matches(patch_agentmail):
+    """Payment more than the pending OFFER still matches — we cap dispensing."""
+    _create_pending_offer(amount_cents=200, message_id="offer-msg-overpay")
+
+    with patch.object(xh, "send_sol", return_value="tx_overpay") as mock_sol, \
+         patch.object(xh, "send_accept"):
+        xh.process_email(_cashapp_notification("$10.00"), db_path=DB)
+
+    mock_sol.assert_called_once()
 
 
 def test_payment_notification_fifo_oldest_matched(patch_agentmail):

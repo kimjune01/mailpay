@@ -21,4 +21,7 @@ LEDGER_GITHUB_TOKEN = os.environ.get("LEDGER_GITHUB_TOKEN", "")
 LEDGER_REPO = os.environ.get("LEDGER_REPO", "kimjune01/envelopay-ledger")
 LEDGER_PREFIX = os.environ.get("LEDGER_PREFIX", "axiomatic")
 
+LOW_BALANCE_LAMPORTS = int(os.environ.get("LOW_BALANCE_LAMPORTS", "240000000"))  # ~$20 of SOL
+OPERATOR_EMAIL = os.environ.get("OPERATOR_EMAIL", "june@june.kim")
+
 KNOWN_TYPES = {"WHICH", "METHODS", "PAY", "ORDER", "FULFILL", "INVOICE", "OFFER", "ACCEPT", "OOPS"}

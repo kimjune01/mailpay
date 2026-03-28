@@ -27,6 +27,8 @@ from exchange.config import (
     SPREAD,
     VENMO_HANDLE,
     WEBHOOK_SECRET,
+    LOW_BALANCE_LAMPORTS,
+    OPERATOR_EMAIL,
 )
 from exchange.db import (
     approve_transaction,
@@ -39,7 +41,7 @@ from exchange.db import (
     is_banned,
     unban_email,
 )
-from exchange.settle import send_sol
+from exchange.settle import get_balance, send_sol
 from exchange.rate import apply_spread, get_sol_usd_rate, usd_cents_to_lamports
 
 PROTOCOL_RE = re.compile(r"^([A-Z]+)(\s*\|.*)?$")
@@ -270,13 +272,9 @@ def _handle_offer(
               to=to)
         return
 
+    # Cap at max — dispense $5 worth even if they sent more
     if amount_cents > MAX_FIAT_CENTS:
-        _oops(client, inbox_id, reply_to_msg_id,
-              f"Maximum is ${MAX_FIAT_CENTS/100:.2f}",
-              {"code": "amount_too_high", "max_cents": MAX_FIAT_CENTS,
-               "sent_cents": amount_cents},
-              to=to)
-        return
+        amount_cents = MAX_FIAT_CENTS
 
     # Extract wallet address
     wallet = body.get("wallet", "")
@@ -374,11 +372,11 @@ def _handle_payment_notification(
     elif "venmo@venmo.com" in combined_lower or "venmo.com" in combined_lower:
         notif_rail = "venmo"
 
-    # Find oldest pending transaction matching amount AND rail (FIFO)
+    # Find oldest pending transaction where payment covers the amount (FIFO)
     pending = get_pending(db_path)
     matched_tx = None
     for tx in pending:
-        if tx["fiat_amount_cents"] != amount_cents:
+        if amount_cents < tx["fiat_amount_cents"]:
             continue
         # Match rail if both notification and offer specify one
         if notif_rail and tx["cashapp_or_venmo"] and tx["cashapp_or_venmo"] != notif_rail:
@@ -412,6 +410,41 @@ def _handle_payment_notification(
         matched_tx["id"], dollars, matched_tx["sol_amount_lamports"],
         matched_tx["wallet_address"], sol_tx_hash,
     )
+
+    # Check if the vending machine is almost empty (alert once)
+    try:
+        balance = get_balance()
+        if balance < LOW_BALANCE_LAMPORTS and not _low_balance_alerted:
+            _alert_low_balance(client, inbox_id, balance)
+            _set_low_balance_alerted(True)
+        elif balance >= LOW_BALANCE_LAMPORTS:
+            _set_low_balance_alerted(False)
+    except Exception:
+        pass  # don't fail the transaction over a balance check
+
+
+
+_low_balance_alerted = False
+
+
+def _set_low_balance_alerted(value: bool) -> None:
+    global _low_balance_alerted
+    _low_balance_alerted = value
+
+
+def _alert_low_balance(client: AgentMail, inbox_id: str, balance: int) -> None:
+    """Email the operator that the hot wallet is running low."""
+    sol = balance / 1_000_000_000
+    try:
+        client.inboxes.messages.send(
+            inbox_id=inbox_id,
+            to=[OPERATOR_EMAIL],
+            subject=f"SOL Machine low: {sol:.6f} SOL remaining",
+            text=f"Hot wallet balance: {balance} lamports ({sol:.6f} SOL).\nRefill to keep dispensing.",
+        )
+        print(f"LOW BALANCE ALERT sent to {OPERATOR_EMAIL}: {balance} lamports")
+    except Exception as e:
+        print(f"Failed to send low balance alert: {e}")
 
 
 def _get_last_message_info(client: AgentMail, thread_id: str) -> tuple[str, str]:
