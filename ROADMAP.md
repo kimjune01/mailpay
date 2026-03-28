@@ -41,3 +41,13 @@ All fields inside `task` are optional. The spec defines the vocabulary so people
 - Multiple pairs: SOL/USDC, ETH/USDC
 - Rate quotes with expiry (firm quotes, not just indicative)
 - Automatic inventory rebalancing
+
+## Consolidate (the sixth cell)
+
+The exchange currently has 5 of 6 Natural Framework roles. Consolidate is missing — no cron job reads the ledger and updates how the system processes next time. Adding it:
+
+- **Dynamic spread**: read settlement history, adjust spread based on volume and chargeback rate. High volume + zero chargebacks → lower spread. Chargebacks → wider spread. The 30% is a starting point, not an endpoint.
+- **Reputation scoring**: read the trust topology, weight matching by sender history. Repeat customers with clean settlements get priority. New senders get slower matching.
+- **Rate prediction**: read trade history, predict demand windows. Pre-fund the hot wallet before peak hours. Adjust indicative pricing in METHODS based on inventory pressure.
+- **Ban decay**: read ban history, soften bans over time. A chargeback from a year ago isn't the same as one from yesterday. The forgiveness curve is a learned parameter.
+- **Anomaly detection**: read recent events, flag patterns. Same amount from different emails in quick succession. Sudden volume spikes. The system learns what normal looks like and alerts on deviation.
