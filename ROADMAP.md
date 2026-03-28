@@ -50,4 +50,5 @@ The exchange currently has 5 of 6 Natural Framework roles. Consolidate is missin
 - **Reputation scoring**: read the trust topology, weight matching by sender history. Repeat customers with clean settlements get priority. New senders get slower matching.
 - **Rate prediction**: read trade history, predict demand windows. Pre-fund the hot wallet before peak hours. Adjust indicative pricing in METHODS based on inventory pressure.
 - **Ban decay**: read ban history, soften bans over time. A chargeback from a year ago isn't the same as one from yesterday. The forgiveness curve is a learned parameter.
+- **Risk-adjusted limits**: read settlement history per sender, adjust max transfer. New sender: $5 cap. After 5 clean settlements: $10. After 20: $50. The cap is a learned parameter per identity, not a global constant. One chargeback resets it to zero.
 - **Anomaly detection**: read recent events, flag patterns. Same amount from different emails in quick succession. Sudden volume spikes. The system learns what normal looks like and alerts on deviation.
