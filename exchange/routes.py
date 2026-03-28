@@ -10,7 +10,6 @@ from agentmail import AgentMail
 
 from exchange.config import (
     CASHAPP_HANDLE,
-    LOW_BALANCE_LAMPORTS,
     MAX_FIAT_CENTS,
     MIN_FIAT_CENTS,
     SOL_WALLET,
@@ -19,24 +18,12 @@ from exchange.config import (
 )
 from exchange.db import (
     _hash_pii,
-    approve_transaction,
     ban_email,
-    claim_transaction,
-    create_transaction,
     get_most_recent_approved,
-    get_pending,
     unban_email,
 )
-from exchange.rate import apply_spread, usd_cents_to_lamports
-from exchange.reply import (
-    _alert_low_balance,
-    _oops,
-    _reply,
-    _set_low_balance_alerted,
-    get_low_balance_alerted,
-)
-from exchange.settle import get_balance
-from exchange.verify import is_valid_base58
+from exchange.rate import apply_spread
+from exchange.reply import _oops, _reply
 
 PROTOCOL_RE = re.compile(r"^([A-Z]+)(\s*\|.*)?$")
 AMOUNT_RE = re.compile(r"\$(\d+\.\d{2})")
@@ -103,224 +90,6 @@ def handle_which(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
            text=json.dumps(terms, indent=2),
            headers={"X-Envelopay-Type": "METHODS"},
            to=from_addr)
-
-
-def handle_offer(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
-                 from_addr: str, text: str, db_path: str,
-                 message_id: str = "", thread_id: str = "", to: str = "") -> None:
-    """Validate OFFER, log pending transaction, reply acknowledgment."""
-    # Import from handler so tests can patch xh.get_sol_usd_rate
-    from exchange import handler as _h
-
-    body = _parse_json_from_text(text)
-
-    amount_cents = 0
-    give = body.get("give", {})
-    if isinstance(give, dict):
-        try:
-            amount_cents = int(give.get("amount", 0))
-        except (ValueError, TypeError):
-            amount_cents = 0
-
-    if not amount_cents:
-        try:
-            amount_cents = int(body.get("amount", 0))
-        except (ValueError, TypeError):
-            amount_cents = 0
-
-    if amount_cents < MIN_FIAT_CENTS:
-        _oops(client, inbox_id, reply_to_msg_id,
-              f"Minimum is ${MIN_FIAT_CENTS/100:.2f}",
-              {"code": "amount_too_low", "min_cents": MIN_FIAT_CENTS,
-               "sent_cents": amount_cents},
-              to=to)
-        return
-
-    if amount_cents > MAX_FIAT_CENTS:
-        amount_cents = MAX_FIAT_CENTS
-
-    wallet = body.get("wallet", "")
-    if not wallet or len(wallet) < 32 or len(wallet) > 44:
-        _oops(client, inbox_id, reply_to_msg_id,
-              "Missing or invalid Solana wallet address",
-              {"code": "missing_wallet",
-               "expected": '{"wallet": "your_solana_address", "give": {"amount": 100, ...}}'},
-              to=to)
-        return
-
-    if not is_valid_base58(wallet):
-        _oops(client, inbox_id, reply_to_msg_id,
-              "Invalid Solana wallet address (bad characters)",
-              {"code": "invalid_wallet",
-               "expected": "base58-encoded Solana address"},
-              to=to)
-        return
-
-    try:
-        raw_rate = _h.get_sol_usd_rate()
-    except Exception:
-        _oops(client, inbox_id, reply_to_msg_id,
-              "Rate unavailable, try again later",
-              {"code": "rate_unavailable"},
-              to=to)
-        return
-
-    spread_rate = apply_spread(raw_rate, SPREAD)
-    sol_lamports = usd_cents_to_lamports(amount_cents, spread_rate)
-
-    proof = give.get("proof", {}) if isinstance(give, dict) else {}
-    rail = give.get("chain", "") if isinstance(give, dict) else ""
-    payment_proof = json.dumps(proof) if proof else None
-
-    tx_id = create_transaction(
-        db_path=db_path,
-        email_from=from_addr,
-        fiat_amount_cents=amount_cents,
-        sol_amount_lamports=sol_lamports,
-        sol_rate=raw_rate,
-        spread_rate=spread_rate,
-        wallet_address=wallet,
-        thread_id=thread_id,
-        cashapp_or_venmo=rail or None,
-        payment_proof=payment_proof,
-        message_id=message_id or None,
-    )
-
-    if tx_id is None:
-        return
-
-    # Silence. The user gets ACCEPT when payment matches, or nothing.
-    # Pending isn't an error — don't OOPS it.
-
-
-def handle_pay(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
-               from_addr: str, text: str, db_path: str,
-               message_id: str = "") -> None:
-    """Accept a PAY (donation). Verify on-chain, log to ledger, say thanks."""
-    from exchange.db import _append_event
-    from exchange.settle import _rpc
-
-    body = _parse_json_from_text(text)
-    proof = body.get("proof", {})
-    tx_hash = proof.get("tx", "") if isinstance(proof, dict) else ""
-
-    if not tx_hash:
-        _oops(client, inbox_id, reply_to_msg_id,
-              "PAY requires a proof with a tx hash",
-              {"code": "missing_proof"},
-              to=from_addr)
-        return
-
-    try:
-        result = _rpc("getTransaction", [
-            tx_hash,
-            {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0},
-        ])
-        if not result.get("result"):
-            _oops(client, inbox_id, reply_to_msg_id,
-                  "Transaction not found on-chain",
-                  {"code": "tx_not_found", "tx": tx_hash},
-                  to=from_addr)
-            return
-    except Exception:
-        _oops(client, inbox_id, reply_to_msg_id,
-              "Could not verify transaction, try again later",
-              {"code": "verification_failed"},
-              to=from_addr)
-        return
-
-    amount = body.get("amount", "0")
-    note = body.get("note", "")
-
-    _append_event({
-        "event": "donation",
-        "from": _hash_pii(from_addr),
-        "amount": amount,
-        "token": body.get("token", "SOL"),
-        "chain": body.get("chain", "solana"),
-        "proof": {"tx": tx_hash},
-        "note": note,
-        "message_id": message_id,
-    })
-
-    _reply(client, inbox_id, reply_to_msg_id,
-           subject="OOPS | Thank you",
-           text=json.dumps({"v": "0.1.0", "type": "oops",
-                            "note": "Thank you for keeping the machine running.",
-                            "error": {"code": "donation_received"}}, indent=2),
-           headers={"X-Envelopay-Type": "OOPS"},
-           to=from_addr)
-    print(f"DONATION from {from_addr}: {amount} {body.get('token', 'SOL')} (tx: {tx_hash})")
-
-
-def handle_payment_notification(client: AgentMail, inbox_id: str, from_addr: str,
-                                subject: str, text: str, db_path: str) -> None:
-    """Auto-match a forwarded CashApp/Venmo payment notification to a pending OFFER."""
-    # Import from handler so tests can patch xh.send_sol and xh.send_accept
-    from exchange import handler as _h
-
-    combined = f"{subject} {text}"
-    match = AMOUNT_RE.search(combined)
-    if not match:
-        logger.info("Payment notification but no dollar amount found — ignoring")
-        return
-
-    dollars = float(match.group(1))
-    amount_cents = int(round(dollars * 100))
-
-    combined_lower = combined.lower()
-    notif_rail = None
-    if "cash@square.com" in combined_lower or "square.com" in combined_lower:
-        notif_rail = "cashapp"
-    elif "venmo@venmo.com" in combined_lower or "venmo.com" in combined_lower:
-        notif_rail = "venmo"
-
-    pending = get_pending(db_path)
-    matched_tx = None
-    for tx in pending:
-        if amount_cents < tx["fiat_amount_cents"]:
-            continue
-        if notif_rail and tx["cashapp_or_venmo"] and tx["cashapp_or_venmo"] != notif_rail:
-            continue
-        matched_tx = tx
-        break
-
-    if not matched_tx:
-        logger.info("Payment notification for $%.2f but no matching pending OFFER — ignoring", dollars)
-        return
-
-    if not claim_transaction(db_path, matched_tx["id"]):
-        logger.warning("Transaction %d was already claimed — skipping", matched_tx["id"])
-        return
-
-    sol_tx_hash = _h.send_sol(matched_tx["sol_amount_lamports"], matched_tx["wallet_address"])
-    approve_transaction(db_path, matched_tx["id"], sol_tx_hash)
-
-    # Look up the original sender from the thread (ledger only has hash)
-    _, original_sender = _h._get_last_message_info(client, matched_tx["thread_id"])
-    _h.send_accept(
-        thread_id=matched_tx["thread_id"],
-        offer_ref=str(matched_tx["id"]),
-        sol_tx=sol_tx_hash,
-        lamports=matched_tx["sol_amount_lamports"],
-        wallet=matched_tx["wallet_address"],
-        to_addr=original_sender,
-    )
-    logger.info(
-        "Auto-approved tx #%d: $%.2f -> %d lamports to %s (sol_tx: %s)",
-        matched_tx["id"], dollars, matched_tx["sol_amount_lamports"],
-        matched_tx["wallet_address"], sol_tx_hash,
-    )
-
-    try:
-        balance = get_balance()
-        if balance < LOW_BALANCE_LAMPORTS and not get_low_balance_alerted():
-            _alert_low_balance(client, inbox_id, balance)
-            _set_low_balance_alerted(True)
-        elif balance >= LOW_BALANCE_LAMPORTS:
-            _set_low_balance_alerted(False)
-    except Exception:
-        pass
 
 
 def handle_banned(client, inbox_id, reply_to_msg_id, from_addr, subject, text, db_path, ban_row, message) -> bool:
@@ -390,3 +159,9 @@ def is_payment_notification(subject: str, text: str) -> tuple[bool, bool]:
     is_reversal = any(w in combined for w in (
         "reversed", "dispute", "chargeback", "payment canceled", "payment returned", "declined"))
     return is_payment, is_reversal
+
+
+# --- Re-exports from submodules so handler.py imports still work ---
+from exchange.offer import handle_offer  # noqa: E402, F401
+from exchange.match import handle_payment_notification  # noqa: E402, F401
+from exchange.donate import handle_pay  # noqa: E402, F401
