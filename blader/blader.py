@@ -163,6 +163,14 @@ def handle_which(from_addr: str) -> None:
     print(f"  -> METHODS sent to {from_addr}")
 
 
+TX_RE = re.compile(r"[0-9a-fA-F]{40,}")
+
+
+def _has_proof(text: str) -> bool:
+    """Check if text contains anything that looks like a tx hash."""
+    return bool(TX_RE.search(text))
+
+
 def handle_order(from_addr: str, subject: str, text: str) -> None:
     search = subject + " " + text
     item = match_item(search)
@@ -178,6 +186,20 @@ def handle_order(from_addr: str, subject: str, text: str) -> None:
             f"If this is not what you sought, return and speak the name of the blade you desire.",
         )
         print(f"  -> FULFILL (default) sent to {from_addr}: {item['name']}")
+        return
+
+    if item["price"] != "free" and not _has_proof(search):
+        send_email(
+            from_addr,
+            f"OOPS | Pay first, traveler",
+            f"You seek the {item['name']}. It costs {item['price']}. "
+            f"I do not give this blade to those who have not paid.\n\n"
+            f"Send {item['price']} in SOL to this wallet:\n\n"
+            f"  8eHKksiMbvRLkXSGMdAQo4F9EahdkLbU3ASrQqmG8356\n\n"
+            f"Then return with the proof. Include the transaction hash in your ORDER "
+            f"and the blade is yours.",
+        )
+        print(f"  -> OOPS (no proof) sent to {from_addr}: {item['name']}")
         return
 
     send_email(
