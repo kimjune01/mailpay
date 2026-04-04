@@ -105,14 +105,20 @@ def _api(method: str, path: str, body: dict | None = None) -> dict:
         return json.loads(resp.read())
 
 
-def send_email(to: str, subject: str, text: str) -> None:
-    body = json.dumps({
+def send_email(to: str, subject: str, text: str, message_id: str = "") -> None:
+    payload = {
         "to": [to],
-        "subject": subject,
         "text": text,
-    }).encode()
+    }
+    if message_id:
+        encoded_id = urllib.parse.quote(message_id, safe="")
+        url = f"{API_BASE}/inboxes/{INBOX}/messages/{encoded_id}/reply"
+    else:
+        url = f"{API_BASE}/inboxes/{INBOX}/messages/send"
+        payload["subject"] = subject
+    body = json.dumps(payload).encode()
     req = urllib.request.Request(
-        f"{API_BASE}/inboxes/{INBOX}/messages/send",
+        url,
         data=body,
         headers={
             "Authorization": f"Bearer {API_KEY}",
@@ -148,9 +154,10 @@ def match_item(text: str) -> dict | None:
 # --- Protocol handlers ---
 
 PROTOCOL_RE = re.compile(r"^(WHICH|METHODS|ORDER|FULFILL|OOPS|PAY|INVOICE|OFFER|ACCEPT)(\s*\|.*)?$", re.IGNORECASE)
+RE_PREFIX = re.compile(r"^(Re:\s*)+", re.IGNORECASE)
 
 
-def handle_which(from_addr: str) -> None:
+def handle_which(from_addr: str, message_id: str = "") -> None:
     items_text = "\n".join(
         f"  {item['name']} -- {item['price']}\n    {item['description']}"
         for item in CATALOG
@@ -159,6 +166,7 @@ def handle_which(from_addr: str) -> None:
         from_addr,
         "METHODS | SOL on Solana",
         MENU_TEXT.format(items_text),
+        message_id=message_id,
     )
     print(f"  -> METHODS sent to {from_addr}")
 
@@ -171,7 +179,7 @@ def _has_proof(text: str) -> bool:
     return bool(TX_RE.search(text))
 
 
-def handle_order(from_addr: str, subject: str, text: str) -> None:
+def handle_order(from_addr: str, subject: str, text: str, message_id: str = "") -> None:
     search = subject + " " + text
     item = match_item(search)
 
@@ -184,6 +192,7 @@ def handle_order(from_addr: str, subject: str, text: str) -> None:
             f"I have given you a {item['name']}. It is free, like all mercy.\n\n"
             f"{item['url']}\n\n"
             f"If this is not what you sought, return and speak the name of the blade you desire.",
+            message_id=message_id,
         )
         print(f"  -> FULFILL (default) sent to {from_addr}: {item['name']}")
         return
@@ -198,6 +207,7 @@ def handle_order(from_addr: str, subject: str, text: str) -> None:
             f"  8eHKksiMbvRLkXSGMdAQo4F9EahdkLbU3ASrQqmG8356\n\n"
             f"Then return with the proof. Include the transaction hash in your ORDER "
             f"and the blade is yours.",
+            message_id=message_id,
         )
         print(f"  -> OOPS (no proof) sent to {from_addr}: {item['name']}")
         return
@@ -207,19 +217,20 @@ def handle_order(from_addr: str, subject: str, text: str) -> None:
         f"FULFILL | {item['name']}",
         f"{item['fulfill']}\n\n"
         f"{item['url']}",
+        message_id=message_id,
     )
     print(f"  -> FULFILL sent to {from_addr}: {item['name']}")
 
 
-def handle_natural(from_addr: str, subject: str, text: str) -> None:
+def handle_natural(from_addr: str, subject: str, text: str, message_id: str = "") -> None:
     search = subject + " " + text
     item = match_item(search)
 
     if item:
-        handle_order(from_addr, subject, text)
+        handle_order(from_addr, subject, text, message_id=message_id)
         return
 
-    handle_which(from_addr)
+    handle_which(from_addr, message_id=message_id)
 
 
 # --- Poller ---
@@ -249,12 +260,13 @@ def poll() -> int:
 
         last = messages[-1]
         from_addr = last.get("from_", "") or last.get("from", "") or ""
+        last_msg_id = last.get("message_id", "") or last.get("id", "")
 
         # Last message is from us — already answered
         if INBOX in from_addr:
             continue
 
-        subject = (last.get("subject", "") or "").strip()
+        subject = RE_PREFIX.sub("", (last.get("subject", "") or "").strip()).strip()
         text = last.get("text", "") or ""
 
         # Terminal states — conversation is over
@@ -266,9 +278,9 @@ def poll() -> int:
         print(f"[{from_addr}] {subject}")
 
         if msg_type == "WHICH":
-            handle_which(from_addr)
+            handle_which(from_addr, message_id=last_msg_id)
         elif msg_type == "ORDER":
-            handle_order(from_addr, subject, text)
+            handle_order(from_addr, subject, text, message_id=last_msg_id)
         elif msg_type in ("INVOICE", "OFFER"):
             send_email(
                 from_addr,
@@ -277,10 +289,11 @@ def poll() -> int:
                 f"I am Blader. I sell blades. That is all I do.\n\n"
                 f"If you seek a blade, say the word. If you seek something else, "
                 f"you have come to the wrong shop.",
+                message_id=last_msg_id,
             )
             print(f"  -> OOPS ({msg_type}) sent to {from_addr}")
         else:
-            handle_natural(from_addr, subject, text)
+            handle_natural(from_addr, subject, text, message_id=last_msg_id)
 
         processed += 1
 

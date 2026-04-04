@@ -67,7 +67,8 @@ def _extract_item_name(subject: str, text: str) -> str:
 
 
 def handle_order(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
-                 from_addr: str, text: str, subject: str) -> None:
+                 from_addr: str, text: str, subject: str,
+                 thread_id: str = "") -> None:
     """Process an ORDER: fulfill with download link."""
     body = _parse_json(text)
     item_name = _extract_item_name(subject, text)
@@ -88,5 +89,5 @@ def handle_order(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
            subject=f"FULFILL | {item_name}",
            text=json.dumps(fulfill, indent=2),
            headers={"X-Envelopay-Type": "FULFILL"},
-           to=from_addr)
+           to=from_addr, thread_id=thread_id)
     logger.info("FULFILLED %s to %s", item_name, from_addr)

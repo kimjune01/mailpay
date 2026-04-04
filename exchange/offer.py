@@ -42,7 +42,7 @@ def handle_offer(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
               f"Minimum is ${MIN_FIAT_CENTS/100:.2f}",
               {"code": "amount_too_low", "min_cents": MIN_FIAT_CENTS,
                "sent_cents": amount_cents},
-              to=to)
+              to=to, thread_id=thread_id)
         return
 
     if amount_cents > MAX_FIAT_CENTS:
@@ -54,7 +54,7 @@ def handle_offer(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
               "Missing or invalid Solana wallet address",
               {"code": "missing_wallet",
                "expected": '{"wallet": "your_solana_address", "give": {"amount": 100, ...}}'},
-              to=to)
+              to=to, thread_id=thread_id)
         return
 
     if not is_valid_base58(wallet):
@@ -62,7 +62,7 @@ def handle_offer(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
               "Invalid Solana wallet address (bad characters)",
               {"code": "invalid_wallet",
                "expected": "base58-encoded Solana address"},
-              to=to)
+              to=to, thread_id=thread_id)
         return
 
     try:
@@ -71,7 +71,7 @@ def handle_offer(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
         _oops(client, inbox_id, reply_to_msg_id,
               "Rate unavailable, try again later",
               {"code": "rate_unavailable"},
-              to=to)
+              to=to, thread_id=thread_id)
         return
 
     spread_rate = apply_spread(raw_rate, SPREAD)

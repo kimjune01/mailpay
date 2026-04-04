@@ -31,6 +31,7 @@ POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "30"))
 
 API_BASE = "https://api.agentmail.to/v0"
 PROTOCOL_RE = re.compile(r"^([A-Za-z]+)(\s*\|.*)?$")
+RE_PREFIX = re.compile(r"^(Re:\s*)+", re.IGNORECASE)
 
 # --- Catalog ---
 # Edit this dict to list your products.
@@ -186,7 +187,7 @@ def poll() -> int:
         if SHOP_INBOX in from_addr:
             continue
 
-        subject = (last.get("subject", "") or "").strip()
+        subject = RE_PREFIX.sub("", (last.get("subject", "") or "").strip()).strip()
         text = last.get("text", "") or ""
         match = PROTOCOL_RE.match(subject)
         msg_type = match.group(1) if match else None

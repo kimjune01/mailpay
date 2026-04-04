@@ -13,7 +13,7 @@ from exchange.routes import _parse_json_from_text
 
 def handle_pay(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
                from_addr: str, text: str, db_path: str,
-               message_id: str = "") -> None:
+               message_id: str = "", thread_id: str = "") -> None:
     """Accept a PAY (donation). Verify on-chain, log to ledger, say thanks."""
     from exchange.settle import _rpc
 
@@ -25,7 +25,7 @@ def handle_pay(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
         _oops(client, inbox_id, reply_to_msg_id,
               "PAY requires a proof with a tx hash",
               {"code": "missing_proof"},
-              to=from_addr)
+              to=from_addr, thread_id=thread_id)
         return
 
     try:
@@ -37,13 +37,13 @@ def handle_pay(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
             _oops(client, inbox_id, reply_to_msg_id,
                   "Transaction not found on-chain",
                   {"code": "tx_not_found", "tx": tx_hash},
-                  to=from_addr)
+                  to=from_addr, thread_id=thread_id)
             return
     except Exception:
         _oops(client, inbox_id, reply_to_msg_id,
               "Could not verify transaction, try again later",
               {"code": "verification_failed"},
-              to=from_addr)
+              to=from_addr, thread_id=thread_id)
         return
 
     amount = body.get("amount", "0")
@@ -66,5 +66,5 @@ def handle_pay(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
                             "note": "Thank you for keeping the machine running.",
                             "error": {"code": "donation_received"}}, indent=2),
            headers={"X-Envelopay-Type": "OOPS"},
-           to=from_addr)
+           to=from_addr, thread_id=thread_id)
     print(f"DONATION from {from_addr}: {amount} {body.get('token', 'SOL')} (tx: {tx_hash})")

@@ -14,7 +14,10 @@ from exchange import handler as xh
 from exchange import config as xc
 from exchange import db as xdb
 from exchange import rate as xr
+from exchange import reply as xreply
 
+# Save real function before autouse fixture patches it
+_real_send_via_urllib = xreply._send_via_urllib
 
 # --- Helpers ---
 
@@ -42,8 +45,15 @@ def mock_client():
 
 @pytest.fixture(autouse=True)
 def patch_agentmail(mock_client):
-    """Patch AgentMail() to return our mock."""
-    with patch.object(xh, "AgentMail", return_value=mock_client):
+    """Patch AgentMail() to return our mock and intercept urllib sends."""
+    replies = mock_client._replies
+
+    def capture_urllib(inbox_id, to, subject, text, headers, message_id=""):
+        replies.append({"inbox_id": inbox_id, "to": to, "subject": subject,
+                        "text": text, "headers": headers, "message_id": message_id})
+
+    with patch.object(xh, "AgentMail", return_value=mock_client), \
+         patch.object(xreply, "_send_via_urllib", side_effect=capture_urllib):
         yield mock_client
 
 
@@ -122,6 +132,8 @@ def test_which_returns_methods(patch_agentmail):
     chain_names = [r["chain"] for r in rails]
     assert "cashapp" in chain_names
     assert "venmo" in chain_names
+    # Reply must use the reply endpoint (message_id from inbound message)
+    assert replies[0]["message_id"] == "test-msg-id"
     # Rate info
     assert body["raw_rate"] == 100.0
     assert body["spread_rate"] == 130.0  # 100 * 1.3
@@ -809,3 +821,91 @@ def test_approve_fails_if_not_claimed():
     assert xdb.approve_transaction(DB, tx_id, "sol_tx") is True
     # But second approve should fail
     assert xdb.approve_transaction(DB, tx_id, "sol_tx_2") is False
+
+
+# --- ORDER / shop tests ---
+
+def test_order_fulfills_any_item(mock_client):
+    """ORDER returns FULFILL with download link for any item."""
+    body = json.dumps({
+        "v": "0.1.0", "type": "order", "id": "ord_1",
+        "task": {"description": "Cashie UI Kit"},
+    })
+    xh.process_email(_payload("ORDER | Cashie UI Kit", body))
+    assert len(mock_client._replies) == 1
+    reply = mock_client._replies[0]
+    assert reply["subject"].startswith("FULFILL")
+    reply_body = _extract_json(reply["text"])
+    assert "download" in reply_body["result"]
+    assert "cashie-ui-kit" in reply_body["result"]["download"]
+
+
+def test_order_extracts_name_from_subject(mock_client):
+    """ORDER extracts item name from subject line."""
+    xh.process_email(_payload("ORDER | React Component Pack, 0.5 SOL", "{}"))
+    reply = mock_client._replies[0]
+    assert "React Component Pack" in reply["subject"]
+    reply_body = _extract_json(reply["text"])
+    assert "react-component-pack" in reply_body["result"]["download"]
+
+
+def test_order_fallback_name(mock_client):
+    """ORDER with bare subject uses fallback name."""
+    xh.process_email(_payload("ORDER", "{}"))
+    reply = mock_client._replies[0]
+    assert "FULFILL" in reply["subject"]
+
+
+# --- Payload-level tests for _send_via_urllib ---
+
+def test_send_via_urllib_uses_reply_endpoint_with_message_id():
+    """When message_id is provided, must use the /reply endpoint."""
+    captured = {}
+
+    def fake_urlopen(req, **kwargs):
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data)
+        resp = MagicMock()
+        resp.read.return_value = b"{}"
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        return resp
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        _real_send_via_urllib("inbox-1", "bob@test.com", "METHODS | test",
+                             "body text", {"X-Envelopay-Type": "METHODS"},
+                             message_id="msg-123")
+
+    assert "/messages/msg-123/reply" in captured["url"]
+    assert "subject" not in captured["body"]  # reply endpoint doesn't need subject
+
+
+def test_send_via_urllib_uses_send_endpoint_without_message_id():
+    """Without message_id, falls back to /messages/send (new thread)."""
+    captured = {}
+
+    def fake_urlopen(req, **kwargs):
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data)
+        resp = MagicMock()
+        resp.read.return_value = b"{}"
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        return resp
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        _real_send_via_urllib("inbox-1", "bob@test.com", "METHODS | test",
+                             "body text", {"X-Envelopay-Type": "METHODS"})
+
+    assert "/messages/send" in captured["url"]
+    assert captured["body"]["subject"] == "METHODS | test"
+
+
+def test_reply_warns_on_missing_message_id(caplog):
+    """_reply should log a warning when message_id is missing."""
+    import logging
+    with patch.object(xreply, "_send_via_urllib"):
+        with caplog.at_level(logging.WARNING, logger="exchange.reply"):
+            xreply._reply(None, "inbox-1", "", "METHODS | test",
+                          "{}", to="bob@test.com")
+    assert "without message_id" in caplog.text

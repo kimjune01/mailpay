@@ -26,6 +26,7 @@ from exchange.rate import apply_spread
 from exchange.reply import _oops, _reply
 
 PROTOCOL_RE = re.compile(r"^([A-Z]+)(\s*\|.*)?$")
+RE_PREFIX = re.compile(r"^(Re:\s*)+", re.IGNORECASE)
 AMOUNT_RE = re.compile(r"\$(\d+\.\d{2})")
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,8 @@ def _parse_json_from_text(text: str) -> dict:
 
 
 def handle_which(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
-                 from_addr: str, text: str, db_path: str) -> None:
+                 from_addr: str, text: str, db_path: str,
+                 thread_id: str = "") -> None:
     """Reply METHODS with CashApp/Venmo rails and live SOL rate."""
     # Import from handler so tests can patch xh.get_sol_usd_rate
     from exchange import handler as _h
@@ -58,7 +60,7 @@ def handle_which(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
         _oops(client, inbox_id, reply_to_msg_id,
               "Rate unavailable, try again later",
               {"code": "rate_unavailable"},
-              to=from_addr)
+              to=from_addr, thread_id=thread_id)
         return
 
     spread_rate = apply_spread(raw_rate, SPREAD)
@@ -89,10 +91,10 @@ def handle_which(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
            subject=f"METHODS | {note}",
            text=json.dumps(terms, indent=2),
            headers={"X-Envelopay-Type": "METHODS"},
-           to=from_addr)
+           to=from_addr, thread_id=thread_id)
 
 
-def handle_banned(client, inbox_id, reply_to_msg_id, from_addr, subject, text, db_path, ban_row, message) -> bool:
+def handle_banned(client, inbox_id, reply_to_msg_id, from_addr, subject, text, db_path, ban_row, message, thread_id="") -> bool:
     """Handle a banned user's message. Returns True if handled (caller should return)."""
     stripped_check = subject.strip()
     if PROTOCOL_RE.match(stripped_check) and PROTOCOL_RE.match(stripped_check).group(1) == "PAY":
@@ -121,13 +123,13 @@ def handle_banned(client, inbox_id, reply_to_msg_id, from_addr, subject, text, d
                                     "note": "Debt settled. You're unbanned. Don't do it again.",
                                     "error": {"code": "unbanned"}}, indent=2),
                    headers={"X-Envelopay-Type": "OOPS"},
-                   to=from_addr)
+                   to=from_addr, thread_id=thread_id)
             return True
         else:
             _oops(client, inbox_id, reply_id,
                   f"You owe ${owed/100:.2f}, you sent ${pay_amount_cents/100:.2f}.",
                   {"code": "insufficient_pay", "owed_cents": owed, "sent_cents": pay_amount_cents},
-                  to=from_addr)
+                  to=from_addr, thread_id=thread_id)
             return True
 
     print(f"BANNED user attempt: {from_addr} — {subject}")
@@ -135,7 +137,7 @@ def handle_banned(client, inbox_id, reply_to_msg_id, from_addr, subject, text, d
     _oops(client, inbox_id, reply_id,
           "Fuck you, pay me.",
           {"code": "banned"},
-          to=from_addr)
+          to=from_addr, thread_id=thread_id)
     return True
 
 

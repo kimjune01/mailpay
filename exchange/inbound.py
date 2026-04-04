@@ -16,7 +16,7 @@ from exchange.routes import _parse_json_from_text
 
 
 def handle_invoice(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
-                   from_addr: str, text: str) -> None:
+                   from_addr: str, text: str, thread_id: str = "") -> None:
     """Someone billed axiomatic. Log and acknowledge; operator decides whether to pay."""
     body = _parse_json_from_text(text)
     amount = body.get("amount", "?")
@@ -37,11 +37,11 @@ def handle_invoice(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
                 f"Note: {note}\n"
                 f"Invoice ID: {invoice_id}\n\n"
                 f"Reply PAY to this thread to settle.",
-           to=OPERATOR_EMAIL)
+           to=OPERATOR_EMAIL, thread_id=thread_id)
 
 
 def handle_fulfill(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
-                   from_addr: str, text: str) -> None:
+                   from_addr: str, text: str, thread_id: str = "") -> None:
     """Someone delivered work axiomatic ordered. Log and acknowledge."""
     body = _parse_json_from_text(text)
     order_ref = body.get("order_ref", "")
@@ -58,7 +58,7 @@ def handle_fulfill(client: AgentMail, inbox_id: str, reply_to_msg_id: str,
                 f"Order ref: {order_ref}\n"
                 f"Summary: {summary}\n\n"
                 f"Full body:\n{json.dumps(body, indent=2) if body else text}",
-           to=OPERATOR_EMAIL)
+           to=OPERATOR_EMAIL, thread_id=thread_id)
 
 
 def handle_methods(from_addr: str, text: str) -> None:

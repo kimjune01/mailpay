@@ -1,10 +1,16 @@
-"""Outbound email helpers for the Cambio exchange."""
+"""Outbound email helpers for the Cambio exchange.
+
+AgentMail API docs: https://docs.agentmail.to/api-reference/inboxes/messages/send
+"""
 
 from __future__ import annotations
 
 import json
+import logging
 
 from agentmail import AgentMail
+
+logger = logging.getLogger(__name__)
 
 from exchange.config import (
     AGENTMAIL_API_KEY,
@@ -13,21 +19,74 @@ from exchange.config import (
 )
 
 
-def _reply(client: AgentMail, inbox_id: str, message_id: str,
-           subject: str, text: str, headers: dict = None, to: str = "") -> None:
-    """Send a message via AgentMail with explicit subject (messages.send)."""
-    full_text = f"{subject}\n\n{text}" if subject else text
-    client.inboxes.messages.send(
-        inbox_id=inbox_id,
-        to=to,
-        subject=subject,
-        text=full_text,
-        headers=headers or {},
+class RateLimited(Exception):
+    """Raised when AgentMail returns 429."""
+    pass
+
+
+def _send_via_urllib(inbox_id: str, to: str, subject: str, text: str,
+                     headers: dict, message_id: str = "") -> None:
+    """Send via urllib (works reliably in Lambda, unlike httpx SDK).
+
+    If message_id is provided, uses the reply endpoint to stay in-thread.
+    Otherwise falls back to messages/send (creates a new thread).
+
+    AgentMail API: POST /v0/inboxes/{id}/messages/{msg_id}/reply
+    """
+    import json as _json
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    payload = {
+        "to": [to] if isinstance(to, str) else to,
+        "text": text,
+        "headers": headers,
+    }
+    if message_id:
+        encoded_id = urllib.parse.quote(message_id, safe="")
+        url = f"https://api.agentmail.to/v0/inboxes/{inbox_id}/messages/{encoded_id}/reply"
+    else:
+        url = f"https://api.agentmail.to/v0/inboxes/{inbox_id}/messages/send"
+        payload["subject"] = subject
+    body = _json.dumps(payload).encode()
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {AGENTMAIL_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
     )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+    except urllib.error.HTTPError as e:
+        if e.code == 429:
+            raise RateLimited(f"429 Too Many Requests (retry-after: {e.headers.get('retry-after', '?')})")
+        raise
+
+
+def _reply(client: AgentMail, inbox_id: str, message_id: str,
+           subject: str, text: str, headers: dict = None, to: str = "",
+           thread_id: str = "") -> None:
+    """Reply to a message via AgentMail.
+
+    Uses the /messages/{id}/reply endpoint to stay in-thread.
+    Falls back to /messages/send if no message_id (creates new thread).
+    Uses urllib directly — the httpx-based SDK hangs in Lambda.
+    """
+    if not message_id:
+        logger.warning("Sending reply without message_id — will create new thread: %s", subject)
+    full_text = f"{subject}\n\n{text}" if subject else text
+    _send_via_urllib(inbox_id, to, subject, full_text, headers or {},
+                     message_id=message_id)
 
 
 def _oops(client: AgentMail, inbox_id: str, message_id: str,
-          note: str, error: dict = None, to: str = "") -> None:
+          note: str, error: dict = None, to: str = "",
+          thread_id: str = "") -> None:
     """Send an OOPS reply."""
     body = {"v": "0.1.0", "type": "oops", "note": note}
     if error:
@@ -36,7 +95,7 @@ def _oops(client: AgentMail, inbox_id: str, message_id: str,
            subject=f"OOPS | {note}",
            text=json.dumps(body, indent=2),
            headers={"X-Envelopay-Type": "OOPS"},
-           to=to)
+           to=to, thread_id=thread_id)
 
 
 def _get_last_message_info(client: AgentMail, thread_id: str) -> tuple[str, str]:
@@ -101,7 +160,7 @@ def send_accept(thread_id: str, offer_ref: str, sol_tx: str,
            subject=f"ACCEPT | {accept['note']}",
            text=json.dumps(accept, indent=2),
            headers={"X-Envelopay-Type": "ACCEPT"},
-           to=to_addr)
+           to=to_addr, thread_id=thread_id)
 
 
 def send_reject(thread_id: str, reason: str) -> None:
@@ -114,4 +173,4 @@ def send_reject(thread_id: str, reason: str) -> None:
         return
     _oops(client, EXCHANGE_INBOX, msg_id, reason,
           {"code": "rejected", "reason": reason},
-          to=to_addr)
+          to=to_addr, thread_id=thread_id)

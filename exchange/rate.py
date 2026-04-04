@@ -8,15 +8,21 @@ import urllib.request
 COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd"
 
 
+FALLBACK_RATE = 80.71  # USD per SOL, updated 2026-03-31
+
+
 def get_sol_usd_rate() -> float:
     """Fetch current SOL/USD price from CoinGecko. Returns USD per SOL."""
-    req = urllib.request.Request(
-        COINGECKO_URL,
-        headers={"Accept": "application/json", "User-Agent": "cambio/0.1"},
-    )
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        data = json.loads(resp.read())
-    return float(data["solana"]["usd"])
+    try:
+        req = urllib.request.Request(
+            COINGECKO_URL,
+            headers={"Accept": "application/json", "User-Agent": "cambio/0.1"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+        return float(data["solana"]["usd"])
+    except Exception:
+        return FALLBACK_RATE
 
 
 def apply_spread(rate: float, spread: float = 0.30) -> float:
